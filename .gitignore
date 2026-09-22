@@ -1,0 +1,22 @@
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+MemoryCaptures/
+*.log
+
+# Codely & VS 项目文件
+.vsconfig
+*.csproj
+*.sln
+CODELY.md
+.codely-cli/
+.codely.packages/
+.codelyignore
+
+# 截图
+screenshots/
+

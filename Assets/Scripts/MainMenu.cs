@@ -99,25 +99,36 @@ public class MainMenu : MonoBehaviour
     void WireButtons()
     {
         // 主面板
-        if (startButton != null) startButton.onClick.AddListener(OpenMapPanel);
-        if (continueButton != null) continueButton.onClick.AddListener(ContinueGame);
-        if (settingsButton != null) settingsButton.onClick.AddListener(OpenSettings);
+        Bind(startButton, OpenMapPanel);
+        Bind(continueButton, ContinueGame);
+        Bind(settingsButton, OpenSettings);
 
         // 游戏设置
-        if (prevButton != null) prevButton.onClick.AddListener(() => Step(-1));
-        if (nextButton != null) nextButton.onClick.AddListener(() => Step(1));
-        if (fullscreenButton != null) fullscreenButton.onClick.AddListener(ToggleFullscreen);
-        if (volumeDownButton != null) volumeDownButton.onClick.AddListener(() => StepVolume(-GameSettings.VolumeStep));
-        if (volumeUpButton != null) volumeUpButton.onClick.AddListener(() => StepVolume(GameSettings.VolumeStep));
-        if (settingsBackButton != null) settingsBackButton.onClick.AddListener(ShowMainPanel);
+        Bind(prevButton, () => Step(-1));
+        Bind(nextButton, () => Step(1));
+        Bind(fullscreenButton, ToggleFullscreen);
+        Bind(volumeDownButton, () => StepVolume(-GameSettings.VolumeStep));
+        Bind(volumeUpButton, () => StepVolume(GameSettings.VolumeStep));
+        Bind(settingsBackButton, ShowMainPanel);
 
         // 地图选择
-        if (wildernessButton != null) wildernessButton.onClick.AddListener(() => StartGame(MapKind.Wilderness));
-        if (villageButton != null) villageButton.onClick.AddListener(() => StartGame(MapKind.Village));
-        if (cityButton != null) cityButton.onClick.AddListener(() => StartGame(MapKind.City));
-        if (mapBackButton != null) mapBackButton.onClick.AddListener(ShowMainPanel);
+        Bind(wildernessButton, () => StartGame(MapKind.Wilderness));
+        Bind(villageButton, () => StartGame(MapKind.Village));
+        Bind(cityButton, () => StartGame(MapKind.City));
+        Bind(mapBackButton, ShowMainPanel);
 
         RefreshContinueButton();
+    }
+
+    /// <summary>绑定按钮：点任何按钮都先响一声 UI 音效（放了 <c>ui_click</c> 才响）。</summary>
+    static void Bind(Button button, UnityEngine.Events.UnityAction action)
+    {
+        if (button == null) return;
+        button.onClick.AddListener(() =>
+        {
+            AudioOverridePlayer.Play(AudioKeys.UiClick);
+            action();
+        });
     }
 
     // ---------------- 面板切换 ----------------

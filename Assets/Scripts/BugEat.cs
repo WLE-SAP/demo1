@@ -127,12 +127,18 @@ public class BugEat : MonoBehaviour
 
         EatenCount++;
 
+        // 吞下去的这一刻出声（没有放 eat 音频就是静音）
+        AudioOverridePlayer.Play(AudioKeys.Eat);
+
         // 恢复体力：不同食物（隐藏数值「分量」不同）恢复的量不一样
         if (vitality != null) vitality.AddStamina(food.SatietyAmount);
 
         // 特殊食物：长大一级（更大、更快、吃得更远、体力上限更高）
         if (food.growth > 0 && growth != null && growth.Grow(food.growth))
+        {
+            AudioOverridePlayer.Play(AudioKeys.Grow);
             Debug.Log("[Bug] 长大到 " + growth.DisplayLevel + " 级（体型 ×" + growth.SizeMultiplier.ToString("F2") + "）");
+        }
 
         // 吃掉的是村民：看见这一幕的村民从此会躲着小虫
         Villager victim = food.GetComponent<Villager>();

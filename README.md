@@ -1,511 +1,243 @@
-# 小虫村庄（2D 俯视小游戏 · 无限地图）
+# What a Bug？· 资源交付说明（图片 / 音频）
 
-一个 Unity/Tuanjie **2D** 小游戏：小虫在一片**没有边界、无限延伸**的村庄世界里散步、吃果子、搬箱子。
-建筑、设施、树木、食物和村民都随小虫移动**流式随机刷新**，走远再回头还是同一个村子。
-村民有职业、有作息：干活、赶集、闲聊、天黑回家；离得远的村民会被自动「冻结」省资源。
-美术全部是程序化的（图元 Sprite + LineRenderer 曲线），也可以用自己提供的图片整体替换（格式规范见下）。
-
-- 引擎：Tuanjie 1.10.3（2022.3 内核），渲染管线：Built-in，2D 模式
-- 入口场景：`Assets/Scenes/MainMenu.scene`（开始界面）→ 点「开始游戏」进入 `BugScene.scene`
+> 这份文档只讲一件事：**图片和音频要按什么格式、什么名字、放到哪里**。
+> 游戏玩法与代码结构不在这里 —— 需要时直接看 `Assets/Scripts`（每个脚本头部都有中文说明）。
 
 ---
 
-## 1. 操作与开始界面
+## 0. 背景与两个投放目录
 
-| 操作 | 效果 |
-| --- | --- |
-| 鼠标左键点击地图 | 小虫走到该处（头顶会出现十字标记），**可以点到任意远的地方** |
-| 空格 | 吃掉**头附近**的食物（整圈判定，不要求朝向；有啃食动作） |
-| **F** | **统一交互键**：拾取 / 放下物品、钻地洞 / 出洞、走地道传送 |
-| **Shift** | 朝当前目标（没目标就朝朝向）**冲一小段**：0.22 秒冲刺 + 0.9 秒冷却 |
-| Esc | 返回开始界面 |
+- 项目：Unity / Tuanjie（2022.3 内核）**2D** 俯视小游戏，入口场景 `Assets/Scenes/MainMenu.scene` → `BugScene.scene`。
+- **现状：美术全部是代码画的图元（方块 / 圆 / LineRenderer 曲线）占位，音频全程静音。**
+  你提供的文件会**自动顶替**这些占位内容，不需要改一行代码、不需要动场景或 Prefab。
+- 只做了「读文件」这一种接入方式：**把文件拖进下面的目录就生效**，删掉就回到默认。
 
-### 开始界面
-
-主面板三个按钮：**开始游戏**（先选地图）/ **继续游戏（地图名）** / **游戏设置**，下面一行小字提示有哪三种地图。
-
-| 面板 | 内容 |
-| --- | --- |
-| 开始游戏 → **选择地图** | 三张地图各一个按钮（荒野 / 农村 / 城市），按钮上写着这个地图的 npc 多少；选完才进游戏 |
-| **游戏设置** | **分辨率**（◀ ▶ 循环切有存过的分辨率）、**屏幕模式**（全屏 / 窗口）、**音量**（− + 每档 10%）；底部「返回」 |
-
-- 分辨率 / 屏幕模式存 `PlayerPrefs`（`menu.resWidth` / `menu.resHeight` / `menu.fullscreen`），
-  启动时就套用，所以显示和实际设置一致。
-- **音量**是全局主音量（`GameSettings`），直接写 `AudioListener.volume` 并存 `PlayerPrefs`（`game.volume`），
-  换场景、重开都保留。
-- 选过的地图存 `PlayerPrefs`（`game.mapKind`），存档里也记一份 → 见第 3 节（存档）与第 5 节「地图类型」。
-
-**往任意方向走**，附近会不断刷出新村庄；走远的区块会被回收。游戏**每 5 秒自动存一次**，随时可以关掉。
-
-左上角 HUD **只显示小虫自己的信息和操作指引**，三块内容自上而下自动排布（不会互相遮挡）：
-
-| 区域 | 内容 |
-| --- | --- |
-| 操作说明 | 左键 / 空格 / F / Shift / Esc、「长大后才吃得下：木箱 2 级 / 树 3 级 / 村民 4 级」，以及「每 5 秒自动保存一次」 |
-| 小虫状态 | `已吃 N 个 · 体力 82/100 · 速度 3.0 · 2 级 · 搬运中 / 躲在地洞里 / 冲刺 · 已保存` |
-| 操作提示 | 随场合变化：`[F] 钻地洞躲起来` / `[F] 拾取箱子` / `[空格] 进食` / `[空格] 长到 3 级才吃得下这个` 等 |
-| 体力条 | 一条彩色血条（绿 → 黄 → 红），**不吃东西会一直掉** |
-
-> 三块面板的位置由 `SimpleHUD.LayoutPanels()` 在运行时按上一块的实际高度往下排，改文案 / 加行都不会再叠在一起。
-
-右下角偏下还有一个**悬浮窗**：小虫**靠近物品或村民**时自动弹出它的介绍（走开约 1.2 秒后淡出）：
-
-- 物品 / 景物：读 `EntityInfo`——果子、叶子、木箱、树、地洞 / 地道、神奇果实都有自己的介绍；
-- 村民：显示 `名字 · 职业` + 这个职业的一段介绍 + **他现在在做什么**；
-- 隐藏数值（`HiddenValue`）**不会**出现在这里。
-
-## 2. 体力、成长与隐藏数值
-
-### 体力（`BugVitality`）
-
-- 满体力 100，**每秒掉 0.8**（站着不动也掉）：`drainPerSecond`
-- 吃东西恢复体力，**不同食物恢复的量不同**（见下面的隐藏数值）
-- 掉到 0 → **饿死**：小虫停下、把当前进度存档（体力回 60%，免得一读档又立刻饿死），
-  停留 1.8 秒（`deathDelay`）后自动回到开始界面
-
-### 成长（特殊食物 → `BugGrowth`）
-
-区块里随机刷出**神奇果实**（金色发光果实，`specialFoodChance = 45%`）。吃掉它小虫长大一级（最多 3 级），**每级**都会：
-
-| 项目 | 每级加成 | 字段 |
+| 类型 | 投放目录 | 目录为空时 |
 | --- | --- | --- |
-| 体型（头 / 尾巴粗细 / 碰撞体） | ×1.35 | `scalePerLevel` |
-| 移动速度 | +12% | `speedPerLevel` |
-| 捕食范围 | +28%（**能吃到更多、更远的东西**） | `eatRangePerLevel` |
-| 体力上限 | +25 | `staminaPerLevel` |
+| 图片（Sprite） | `Assets/Resources/ArtOverride/` | 用代码画的图元 |
+| 音频（AudioClip） | `Assets/Resources/AudioOverride/` | 全程静音（不报错、不影响玩法） |
 
-实测：头 0.112 → 0.151 → 0.190 → 0.230，尾宽 0.064 → 0.131，碰撞 0.056 → 0.115，
-移速 2.6 → 3.54，捕食半径 0.7 → 1.29，体力上限 100 → 175；满级后不再长。
+> 文件名就是「用在哪里」的唯一凭据，所以**命名比什么都重要**：对照第 1.2 / 2.2 节的表来起名。
+> 名字写错不会崩，但会完全不生效 —— 运行时 Console 会点名告诉你是哪个文件没对上（见 1.5 / 2.6）。
 
-### 长大才吃得下的东西（所有物品和 npc 都能吃）
+---
 
-**场上所有东西都挂着 `Edible`**，但果子那样的软东西一开始就啃得动，木箱 / 树 / 村民
-要长大到一定等级才吃得下——这就是「长大」的主要意义：**等级越高，能吃的东西越多**。
+## 1. 图片资源
 
-| 吃的东西 | 需要等级 | 字段 / 门槛常量 | 吃下去 |
-| --- | --- | --- | --- |
-| 野果子 / 嫩叶 / 神奇果实 | 1 级（一开始就行） | `requiredLevel = 0` | 恢复体力 / 长大一级 |
-| **木箱** | **2 级**（长大 1 次） | `BugGrowth.CrateLevel` | 按 `HiddenValue` 分量恢复体力 |
-| **树** | **3 级**（长大 2 次） | `BugGrowth.TreeLevel` | 同上（树的分量 18~31，很顶饱） |
-| **村民**（不分职业） | **4 级**（满级） | `BugGrowth.VillagerLevel` | 恢复 45 体力（一顿大餐） |
+### 1.1 硬性格式要求
 
-- 等级口径是**玩家看到的等级**（`BugGrowth.DisplayLevel`：还没长大 = 1 级，每吃一颗神奇果实 +1 级），
-  HUD 里的「4 级」和门槛用的是同一套数字。
-- 等级不够时**吃不到**：`BugEat.FindTarget()` 直接跳过，HUD 会提示
-  `[空格] 长到 3 级才吃得下这个`；右下角悬浮窗在村民介绍后面也会补一句
-  `（小虫长到 4 级才吃得下它）`。
-- 想调门槛：改 `BugGrowth.CrateLevel / TreeLevel / VillagerLevel`（或某个物件自己的 `Edible.requiredLevel`）。
-- **吃掉村民会留下目击者**——见第 8 节「亲眼看到吃人之后」。木箱被啃掉时会自动从手里掉下来
-  （`DragController` 会清掉引用，不会让小虫一直卡在「搬运中」的慢速状态）。
-
-### 隐藏数值（`HiddenValue`）
-
-**每个物品和村民都挂着一个不显示给玩家的数字**：
-
-| 对象 | 数值含义 | 实际作用 |
+| 项目 | 要求 | 原因 |
 | --- | --- | --- |
-| 果子 / 叶子 | 分量 6~14 | 决定吃下去恢复**多少体力**（`Edible.SatietyAmount`） |
-| 神奇果实 | 分量 22~30 | 恢复得多，而且让虫子长大 |
-| 木箱 / 树 / 地洞 | 分量 5~30 | 目前只作记录（`note` 写明用途），给后续玩法留口子 |
-| 村民 | 体魄 2~10 | 影响**追逐的耐心**（`reactMin/Max` ×0.75~1.35）和一点点移速（×0.94~1.10） |
+| 文件格式 | **.png**（24 位或 32 位） | 只有 png 能带透明通道；`.jpg` 没有 alpha、`.psd/.ai` 是源文件 |
+| 透明通道 | **必须有，且背景真透明**（不要白底 / 绿幕底） | 不透明背景会实心盖住它下面的草地、角色 |
+| alpha 类型 | **直通 alpha（Straight）**，不要预乘 alpha | 预乘会让边缘发暗发脏 |
+| 色彩空间 | sRGB，8 位/通道 | 不要做 HDR / 线性空间转换 |
+| 单张尺寸 | 任意分辨率，**最大 2048×2048** | 超过会爆显存、拖慢加载 |
+| 单文件体积 | 建议 < 2 MB | 贴图都进内存 |
+| 命名 | 只用**英文小写 + 数字 + 下划线**，如 `bug_head.png`；一个 key 只放一张 | 中文/空格文件名的匹配容易出岔子 |
+| 建议像素密度 | **64 像素 = 1 世界单位**（直接按这个画最省事） | 和项目自带素材一致 |
 
-数值只在代码 / 编辑器里可见（`note` 字段是给人看的备注），HUD 和悬浮窗都不会显示它。
+### 1.2 要哪些图（按名字对照）
 
-## 3. 存档与「继续游戏」
-
-- 进入游戏后**每 5 秒自动存档一次**（`AutoSave.interval`），另外在
-  **窗口失焦 / 切后台 / 退出游戏 / 返回主菜单**时都会再补存一次，
-  所以直接点右上角关掉游戏也不会丢进度。
-- 主菜单新增 **「继续游戏」**：有存档时可点、没存档时置灰写着「还没有存档」，
-  有存档时按钮上还会写着存档是哪张地图（「继续游戏（城市）」）。
-  「开始游戏」= **先选地图**（荒野 / 农村 / 城市）再新开一局（**换一个新的世界种子**）。
-- 存档位置：`%USERPROFILE%\AppData\LocalLow\<公司名>\<产品名>\whatabug_save.json`
-  （即 `Application.persistentDataPath`）。写入时先写 `.tmp` 再替换，避免正好被杀掉留下坏档。
-- 存的内容（`GameSave`）：**地图类型、世界种子、小虫位置、已吃数量、当前体力、成长等级、游戏内累计小时数、本局游玩秒数、存档时间**。
-  因为区块内容是「坐标 + 种子」确定性生成的，所以只要地图类型和种子对得上，走远再回来、读档后回来，村庄都一模一样。
-- 地图类型是存档 **2 版** 新增的字段：1 版老存档读出来没有这一项，
-  `GameSave.ResolvedMapKind` 会按 `version` 判断，老档沿用玩家在菜单里选的那张地图（不会莫名变成荒野）。
-- 村民 / 地洞不存：它们属于区块，读档后由区块重新生成（位置和职业由种子决定，和上次一致）。
-
-## 4. 地洞与地道
-
-每个区块会随机出现 **0~2 个地洞**（`VillageGenerator.burrowMin~burrowMax`），其中约 45% 是**地道**：
-
-| 类型 | 外观 | 按 E 的结果 |
-| --- | --- | --- |
-| 地洞 | 深色洞口 + 土黄边 | 钻进去躲起来：小虫隐入地下（头和尾巴都收起来、碰撞关闭、点击不动），**村民看不见你**；再按一次 E 出来 |
-| 地道 | 洞口 + 旁边堆着两块小石头 | 直接传送到配对的另一头钻出来（镜头会立刻跟上，不会拉一路） |
-
-- 配对由 `VillageWorld.PairTunnels()` 完成：在**已加载的区块**里挑两头距离 24~110 之间的地道连起来，
-  所以传送一定是「走一段路」的距离；另一头被回收时配对自动解开、剩下的重新找搭档。
-  想只放地洞不放地道：把 `VillageGenerator.tunnelChance` 设为 0。
-- 地洞本身是「地面上的洞」——和草地/道路/农田一样放在 **Ground 排序层**，站在洞口的角色绝不会被洞口盖住。
-- 躲起来的时候不能吃东西、不能搬箱子（按 E 出来即可）。村民的视野看不到躲起来的小虫，
-  被追的时候钻进地洞是最有效的脱身办法。
-
-## 5. 无限地图与流式加载
-
-地图**没有边界**：原来的栅栏环和四面碰撞墙已经删除，`BugController.useWorldLimit` 关闭，
-草地是一块跟着小虫走、并对齐 4 格贴图网格的 `InfiniteGround`（看起来无限延伸）。
-
-世界被切成 **32×32 世界单位的区块（chunk）**，由 `VillageWorld` 调度：
-
-| 参数（`VillageWorld`） | 当前值 | 含义 |
-| --- | --- | --- |
-| `chunkSize` | 32 | 区块边长 |
-| `viewRadius` | 1 | 以小虫所在区块为中心，加载 (2×1+1)² = **9 个区块** |
-| `keepRadius` | 2 | 超出 2 格（切比雪夫距离）的区块才回收，避免来回乱刷 |
-| `worldSeed` | 20260922 | 世界种子，决定整个世界长什么样 |
-| `streamInterval` | 0.25 s | 检查间隔 |
-| `freezeRadius` | 26 | 超过这个距离的村民被冻结 |
-| `freezeFarVillagers` | true | 是否启用远距离冻结 |
-
-- 每个区块的十字路口都在区块中心 → 相邻区块自然接成**连续的路网**，走起来像一整片村落。
-- 区块中心有广场 + 水井的是「村庄区块」（默认 65%），其余是「野外区块」（树多、几乎没房子）。
-- 生成是**确定性**的：区块坐标 + 世界种子决定一切，所以走远再回来，房屋树木位置一模一样
-  （只有村民会走动）。
-- 区块回收时会 `Destroy` 整个区块物体，并把 `VillageMap` 里对应的锚点剪掉，内存不会无限涨。
-
-### 地图类型：荒野 / 农村 / 城市
-
-「开始游戏」时选的那张地图（`MapKind`）由 `VillageWorld.Start` 调 `VillageWorld.ApplyMapKind()` 套用：
-世界的生成方式完全没变（还是区块坐标 + 种子），变的只是**一组密度参数**——「村子有多密、npc 有多少」。
-
-| 参数 | 荒野 | 农村 | 城市 |
-| --- | --- | --- | --- |
-| `hamletChance` 村庄区块比例 | 0.15 | 0.65 | **1.0**（全是城区） |
-| `villagerMin~Max` 每区块 npc | 0~1 | 2~4 | **6~9** |
-| `houseMin~Max` 房屋 | 0~1 | 3~5 | 6~9 |
-| `treeMin~Max` 树 | 12~18 | 10~16 | 3~7 |
-| `foodMin~Max` 食物 / `crateMax` 木箱 | 7~11 / 1 | 5~8 / 2 | 8~12 / 3 |
-| `buildFacilities` 农田摊位等 | false | true | true（摊位 95%、面包房铁匠铺各 35%） |
-| `keepVillagersInView` / `minVillagersInView` | false / 0 | true / 2 | true / **5** |
-| `maxExtraPerChunk` 每区块最多补人 | 0 | 4 | 6 |
-| `freezeRadius` 冻结距离 | 26 | 26 | 22（人太多，冻近一点省性能） |
-| **实测：9 个区块生成多少村民（同一种子）** | **6** | **26** | **74** |
-
-- 改密度就改 `MapProfiles.ApplyToGenerator()` / `ApplyToWorld()` 里的数字；
-  `MapProfiles.Label()` / `Description()` 是主菜单按钮上的文案。
-- 荒野特意关掉「保证视野里有村民」（`keepVillagersInView = false`），否则荒地里会凭空补人出来。
-- 地图记在 `PlayerPrefs`（`game.mapKind`）和存档里，「继续游戏」用存档那张地图还原世界。
-
-### 村民冻结（省资源）
-
-`VillageWorld` 每 0.5 秒检查一次：离小虫超过 `freezeRadius`（26）的村民会调用
-`Villager.SetFrozen(true)`：
-
-- 停状态机（`enabled = false`，不再跑 Update / FixedUpdate）
-- 停物理（`rb.simulated = false`）
-- 关渲染（`freezeVisuals`，精灵不再提交绘制）
-- 从 `Villager.All` 里移出（其他村民不会再找它闲聊）
-
-走回 26 格以内自动解冻，位置、状态、作息原样恢复。
-
-**视野里保证有村民**：`VillageWorld` 每 0.5 秒数一次「可见范围（`viewHalfSize` = 13 × 7.5）里有几个村民」，
-少于 `minVillagersInView`（默认 2）就在小虫附近补人，补出来的村民挂在当前区块下（区块回收时一起销毁），
-每个区块最多补 `maxExtraPerChunk`（4）个，不会越补越多。
-
-## 6. 场景与对象
-
-| 对象 | 组件 | 说明 |
-| --- | --- | --- |
-| `Main Camera` | Camera + FollowCamera | 正交俯视，`orthographicSize = 8.4`（可见 16.8 × 29.9 世界单位） |
-| `Environment/Ground` | SpriteRenderer(T_Grass) + **InfiniteGround** | 无限草地，跟着小虫走并对齐 4 格；在 **Ground 排序层**（最底层），保证永远在所有内容之下 |
-| `Bug` | Rigidbody2D + CircleCollider2D + BugController + BugEat + YSort | 玩家小虫 |
-| `Bug/Head` | SpriteRenderer(S_BugHead) → `Mouth` | 头；`Mouth` 是嘴部锚点 |
-| `Bug/Body` | LineRenderer + WormBody | 等宽的黑色曲线尾巴 |
-| `MoveMarker` | SpriteRenderer(S_Crosshair) | 点击目标点标记 |
-| `GameDirector` | DragController + SimpleHUD + ReturnToMenu + ProximityHighlight + **AutoSave** + ArtOverrideApplier | 全局逻辑 + 自动存档 |
-| `Village` | **VillageWorld** + VillageGenerator + VillageClock + VillageMap | 流式调度、区块生成、游戏内时间、设施锚点表 |
-| `HUD` | Canvas + CanvasScaler | 左上角操作说明 + 小虫状态（2 行） |
-| MainMenu `Canvas/Panel` | **StartButton** + **ContinueButton** + **SettingsButton** + 一行地图提示 | 开始游戏（→选地图）/ 继续游戏 / 游戏设置 |
-| MainMenu `Canvas/SettingsPanel` | 分辨率 ◀▶、屏幕模式、音量 − + 、返回 | **游戏设置**（默认隐藏，点「游戏设置」才显示） |
-| MainMenu `Canvas/MapPanel` | 荒野 / 农村 / 城市 三个按钮 + 返回 | **选择地图**（默认隐藏，点「开始游戏」才显示） |
-
-> `Environment` 下原来还有 `Fence_0..67` 和 `Boundaries`（四面墙），为了做无限地图已经删除。
-
-## 7. 区块里有什么
-
-每个「村庄区块」（32×32）大致包含：
-
-| 内容 | 数量（每区块） | 说明 |
-| --- | --- | --- |
-| 十字路 + 广场 | 1 | 区块中心，相邻区块接成路网 |
-| 水井 | 1 | 广场中心，带碰撞 |
-| 房屋 | 3~5（野外 0~1） | 每个村民的家（夜里会回去），窗户夜里透出暖黄灯光 |
-| 农田 | 70% 概率 | 翻好的地 + 垄 + 幼苗，农夫在田里干活 |
-| 畜栏 | 35% | 三面围栏 + 4 只羊，牧羊人在里面走动 |
-| 面包房 / 铁匠铺 | 各 22% | 带招牌的房子；铁匠铺有铁砧 + 夜里更亮的炉火 |
-| 集市摊位 | 80% | 柜台 + 遮阳篷 + 货物，摆在广场边 |
-| 花园 / 长椅 / 公告板 | 70% / 1~2 / 40% | 闲逛、坐着聊天、看留言的地方 |
-| 路灯 | 4~12 | 沿区块内的十字路排布，**夜里亮起来** |
-| 树 / 食物 / 木箱 | 10~16（野外 20~48） / 5~8 / 0~2 | 树木用碰撞体挡住去路；食物可吃；木箱可搬 |
-| 地洞 | 0~2 | 可以钻进去躲起来；约 45% 是能相互传送的地道（见第 3 节） |
-| 村民 | 2~4（野外 0~1） | 见下一节 |
-
-一个村庄区块大约 100 个精灵，加载 9~12 个区块约 1000~1700 个渲染器。
-
-> **排序坑（已修）**：农田、花坛、牧场的草地这类「一整块铺在地上」的贴图，如果按自己的中心 Y 排序，
-> 站在它上半部分的角色会被整块地**盖住看不见**。现在它们全部放在 **Ground 排序层**用固定次序排
-> （草地 -900 → 道路 -885 → 农田 -870/-860/-850 → 牧场 -845 → 花坛 -840/-835/-830），
-> Ground 层整体画在 Default 层之下，所以角色、房屋、树、羊永远在它们上面。
-
-## 8. 村民：职业、作息、视野与反应
-
-`VillagerJobs.All` 是一张职业花名册，生成时随机取用（9 种职业）。
-**衣服颜色就是职业标识**（同职业的人有深浅差异）。
-
-| 职业 | 衣服颜色 | 上班的地方 | 工作时的描述 | 看到小虫的反应 |
+| 文件名（key） | 替换的原始素材 | 占地世界尺寸 | 推荐像素 | 特殊要求 |
 | --- | --- | --- | --- | --- |
-| 农夫 | 麦黄 | 自己区块的农田 | 在田里劳作 | 无视（干活要紧） |
-| 面包师 | 面粉白 | 面包房门口 | 在面包房烤面包 | **躲避** |
-| 摊贩 | 橙红 | 集市摊位（柜台前） | 守着自己的摊位 | **躲避**（怕吓跑客人） |
-| 守卫 | 制服蓝 | 沿区块内主路一段段巡逻 | 沿街巡逻 | **追逐**（要把虫子赶走） |
-| 铁匠 | 铁灰 | 铁匠铺 | 在铁匠铺打铁 | 无视（胆子大） |
-| 樵夫 | 林绿 | 找最近的树 | 在林子里砍柴 | **追逐**（拿家伙追） |
-| 牧羊人 | 草青 | 畜栏里 | 在畜栏放牧 | **躲避** |
-| 孩子 | 亮紫 | 自己那片村庄中心（到处跑） | 在广场上玩 | **追逐**（好奇） |
-| 长者 | 长者灰紫 | 附近的长椅 / 水井 | 在井边晒太阳 | **躲避**（怕虫） |
+| `bug_head.png` | `S_BugHead` | 1 × 1 | 128 × 128 | 朝向**默认朝右**（+X 是头的正前方）；长大时会被等比放大，别贴边 |
+| `crosshair.png` | `S_Crosshair` | 1 × 1 | 64 × 64 | 点击移动的十字标记，居中、线条细一点更清楚 |
+| `ground.png` | `T_Grass` | 4 × 4 | 256 × 256 | **必须无缝平铺**（左右接得上、上下接得上）；用 2 的幂尺寸 |
+| `road.png` | `T_Road` | 4 × 4 | 256 × 256 | **必须无缝平铺**；四边要能接上，走向按图内纹理 |
+| `rect.png` | `S_Rect` | 1 × 1 | 64 × 64 | 会被**九宫格拉伸**（四角 20px 不变形）；用途最广 → 见下方备注 |
+| `roundrect.png` | `S_RoundRect` | 1 × 1 | 64 × 64 | 圆角矩形，圆角半径 ≈ 20px，同样九宫格拉伸 |
+| `disc.png` | `S_Disc` | 1 × 1 | 64 × 64 | 正圆、**铺满画布不要留边距**；会被缩放成各种大小 |
+| `berry.png` | `S_FoodBerry` | 1 × 1 | 64 × 64 | 地上的果子，内容居中、留 1–2px 透明边 |
+| `leaf.png` | `S_FoodLeaf` | 1 × 1 | 64 × 64 | 地上的叶子，同上 |
 
-职业与据点都是**在自己这块区块里**分配的（家 = 离工作点最近的房子，闲逛点 = 区块中心），
-所以每个区块都是一个自给自足的小村子。
+**`rect.png` 是复用最多的素材**，一张图同时决定这些东西的外观：
+房屋的屋顶 / 墙体 / 门窗、木箱、**村民的身子**、农田的垄、畜栏围栏。
+**`disc.png` 同样复用很多**：树冠、**村民的头**、水井、羊、花、路灯头、地洞的洞口和小石头、各种高亮底衬。
 
-### 视角与反应
+> 因为是一图多用，画 `rect` / `disc` 时要**偏中性**（别画太具体的细节），否则村民的头和树冠会一起变成那个样子。
 
-村民美术只会左右翻转（头永远朝上），所以**视野是朝向前方的左右扇形**：
+### 1.3 尺寸、锚点与九宫格（导入时自动算好，不用你改设置）
 
-- `viewRadius`(5.5)：视野半径；`viewHalfAngle`(55°)：以朝向为中轴的扇形半角
-- `awareRadius`(1.4)：贴脸距离，这么近不管朝哪都会被发现
-- 小虫**躲进地洞**时村民完全看不见它，追到一半会跟丢
-- 在 Unity 里选中村民可以在 Scene 视图看到视野扇形（`drawViewGizmo`，仅编辑器）
+放进目录后，编辑器脚本会自动把图片设成 **Sprite**，并按**被替换素材在世界里的宽度**反推 `Pixels Per Unit`：
 
-看到一个村民被摆到小虫面前就会按职业进入 `Chase`（追，保持 `chaseDistance`=1.2 不会贴脸）或
-`Flee`（往反方向跑 `fleeDistance`=7），反应持续 `reactMin~Max` 秒，之后回到原本的作息安排。
+- **不管你是 64px 还是 1024px，替换后占的位置都和原素材一样大**，不会破坏布局；
+- **锚点固定为图片中心** → 请把内容画在画布正中间，四周留出透明边距；
+- 比例按**宽度**对齐，高度按图片自身长宽比等比缩放（非正方形会让物件变高/变矮）；
+- 想手工改大小：改该图片 Import Settings 里的 `Pixels Per Unit`（数值越大画面里越小）。
+  自动配置只在**首次导入**时执行，之后你手改的值会保留；
+- 文件名没匹配到任何素材时，按通用值 `64 像素 = 1 世界单位` 导入。
 
-> 上面这张表是**没见过小虫吃人**时的反应。见过之后就只有一种反应了 —— 见下一节。
+**平铺素材**（`ground` / `road`）和**九宫格素材**（`rect` / `roundrect`）是两种特殊约定，务必按 1.2 节的要求画。
 
-### 亲眼看到吃人之后：目击者一律改成躲避
+### 1.4 生效范围与限制
 
-小虫吃到村民时（`BugEat`）会喊一声 `Villager.ReportEaten(victim)`，**当场目击**的村民会被永久标成「怕」：
+- 替换是**按素材名全场景替换**：`disc.png` 会同时换掉树冠、村民的头、羊、花、路灯头……
+- 只影响游戏场景 `BugScene`；开始界面 `MainMenu` 的 UI 图片**不受影响**。
+- 无限地图的区块会边走边生成/回收，但同类素材用的是同一张替换图，所以**替换是全局一致的**。
+- **换不了的东西**：小虫的尾巴是 `LineRenderer` 画的等宽黑色曲线，没有对应图片 key。
+  想调它得改场景里 `Bug/Body` 上 `WormBody` 的 `width`（粗细）、`spacing`（节距）和摆动幅度。
 
-- **算不算目击**：离吃人的地方 ≤ `witnessRadius`(11)，**并且**是亲眼看到的
-  （`CanSeeBug()` 小虫在视野扇形里，或者离受害者近到 ≤ `witnessCloseRadius`(4.5) 根本来不及躲）。
-- **态度改写**：`fearsBug = true` 之后，不管它原本是「追」（守卫 / 樵夫 / 孩子）还是「无视」（农夫 / 铁匠），
-  看到小虫**一律躲**（`TryStartReaction()` 直接用 Flee 覆盖职业反应）。
-- **当场就翻脸**：正在追小虫的守卫会立刻掉头跑，不会先把这一段追完。
-- **更警觉、跑得更凶**：视野半径 ×`afraidViewBonus`(1.25)，躲开的距离与持续时间 ×`afraidFleeBonus`(1.35)，
-  悬浮窗里的状态会显示「见过它吃人，拼命躲开！」。
-- **只影响当场看到的人**：没看到的村民（比如 16 格外那个）态度不变；村民本身不存档，
-  被区块回收 / 读档重建后就是「没见过」的新村民了。
+### 1.5 自检 / 恢复默认
 
-也就是说：**等级不够时村民是「会走路的危险」，满级之后吃一个人，附近的人就再也不敢靠近你了。**
+运行游戏后看 Console：
 
-**反应时会降低移速**：`Villager.reactSpeed = 0.72`。村民基础速度也从 1.1~2.1 降到
-**0.95~1.7**（孩子 1.5~2.2），所以：
-
-| | 速度 |
+| 日志 | 含义 |
 | --- | --- |
-| 小虫 `walkSpeed` | 2.6 |
-| 普通村民 | 0.95~1.7 |
-| 村民追逐时 | 基础 × 0.72 ≈ 0.7~1.2 |
+| `[ArtOverride] 图片 N 张，替换了 M 个精灵。` | 生效 |
+| `……未匹配到素材（名字写错了？）：xxx` | 有文件名没对上，照 1.2 节的表改名 |
+| `[ArtOverride] Resources/ArtOverride 里没有图片，使用程序化美术。` | 目录是空的，走的默认美术 |
 
-也就是说小虫永远跑得掉，被追上只是「被围观」，不会真的被抓住。
+**恢复默认：把目录里的图片删掉即可**，不需要改代码。
 
-### 状态机
+---
 
-```
-Idle（原地待着）  Commute（走向目标点）  Work（干活）  Socialize（闲聊）  Play（玩耍）
-Chase（看到小虫追过来）  Flee（看到小虫躲开）
-```
+## 2. 音频资源
 
-- 每个状态都有计时；计时到点 → `Decide()` 按 **当前作息 + 职业 + 自己区块的设施** 决定下一件事
-- `Decide()` 会**先检查视野**：看到小虫且职业不是「无视」就立刻转入 Chase / Flee
-- `Commute` 以「到达目的地」结束；**被挡住超过 `stuckTimeout`** 就当作到了，就地做事
-- `Socialize` 时每 0.3 秒找一次 `chatRadius` 内的邻居，**转过身面对面**（只左右翻转）
-- 换班时（比如中午到了）正在干活的人最多再撑 2 秒就转入新安排；走到半路换班也会提前收尾
-- 朝向由**目标方向**决定（不是物理速度），被挤到时不会左右乱翻
+### 2.1 硬性格式要求
 
-### 作息（`VillageClock`）
-
-一天 = `dayLengthSeconds` 秒现实时间（默认 **240 秒**），开局 `startHour = 7`。
-
-| 时段 | 游戏时间 | 村民在做什么 |
+| 项目 | 要求 | 原因 |
 | --- | --- | --- |
-| 夜里 | 22:00 – 05:00 | 回家待着（Idle）；路灯和窗户亮着 |
-| 早晨 | 05:00 – 11:00 | 去上班地点干活 |
-| 正午 | 11:00 – 14:00 | 社交时间：就近找人聊 / 去广场、水井、摊位扎堆 |
-| 下午 | 14:00 – 18:00 | 继续干活 |
-| 傍晚 | 18:00 – 22:00 | 再聊一会儿 / 歇脚 |
+| 文件格式 | 音效：**.wav**（首选）或 .ogg；BGM：**.ogg**（首选）或 .wav | mp3 也能读，但解码开销大、循环点往往对不齐，**不建议** |
+| 采样率 | **44100 Hz 或 48000 Hz**，同一个 key 只用一种 | 混采样率会让响度和音色不一致 |
+| 位深 | 16 位（24 位也行，导入会转） | |
+| 声道 | 音效：**单声道（mono）**；BGM：单声道或立体声都行 | 音效是 2D 播放，立体声只是白占一倍内存 |
+| 响度 | 峰值 **不超过 −1 dBFS**（绝不削波），同一批音效之间电平差控制在 ±2 dB 内 | 全局只有一个音量滑块（见 2.5），**素材之间音量是自己对齐的** |
+| 静音头尾 | 音效**不要留静音头**（触发即响）；BGM **首尾都不要留静音** | 静音头会显得"按了没反应"；BGM 的静音会在循环时变成空档 |
+| BGM 循环 | **必须无缝循环**：首尾都是零交叉、正好切在小节线上，**不要自带淡入淡出** | 播放器是整段首尾相接循环（loop = 整段），带淡入淡出会一循环就"喘一口气" |
+| 时长 | 音效 0.05–2 秒；BGM 30–120 秒（长了浪费内存） | |
+| 文件体积 | 音效 < 300 KB；BGM < 8 MB | |
+| 命名 | 英文小写 + 数字 + 下划线，如 `eat.wav`；**一个 key 只放一个文件** | 同名多文件时只会用其中一个 |
 
-`VillageClock.Night01`（0=白天，1=深夜）驱动 `NightGlow`：路灯、房子窗户、铁匠铺炉火。
-想快进：调 `VillageClock.speed`；调试可用 `SkipHours()` / `SetHour()`。
+### 2.2 要哪些音频（key 对照表）
 
-## 9. 代码结构（Assets/Scripts）
+| 文件名（key） | 什么时候响 | 循环 | 建议时长 | 备注 |
+| --- | --- | --- | --- | --- |
+| `eat.wav` | 小虫吃掉东西的那一刻（果子 / 树叶 / 木箱 / 树 / 村民） | 否 | 0.2–0.4 s | 啃食感；吃到村民也用这一声 |
+| `grow.wav` | 吃到神奇果实长大一级，**紧跟在 eat 后面**再响一次 | 否 | 0.6–1.5 s | 要有"升级了"的正反馈，允许比 eat 响一点 |
+| `pickup.wav` | 按 F 拾取物品 | 否 | 0.1–0.3 s | |
+| `drop.wav` | 按 F 放下物品（含搬运中途自动脱手） | 否 | 0.1–0.3 s | |
+| `step.wav` | 小虫走路时的脚步，**按走过的距离触发**（默认每 0.6 世界单位一次，走得越密越快） | 否 | 0.05–0.15 s | 必须**很短、无尾音**，否则连成一片糊掉；播放器会给每次脚步 ±8% 的音高浮动 |
+| `ui_click.wav` | 开始界面点任何按钮（开始游戏 / 继续游戏 / 设置 / 分辨率 / 音量 / 返回 / 选地图…） | 否 | ≤ 0.15 s | 干脆的"嗒"；会被连点，别太长 |
+| `bgm.ogg` | 进入游戏场景 `BugScene` 时自动播放 | **是** | 30–120 s | 村里闲逛的轻松氛围曲 |
+| `bgm_menu.ogg` | 开始界面 `MainMenu` 时自动播放 | **是** | 30–120 s | 音量别抢戏 |
 
-| 脚本 | 职责 |
+> **没有的文件就是静音**：只交 `eat` 和 `bgm`，其余照旧不发声，不会有任何报错。
+
+### 2.3 命名规则（写起来可以松一点）
+
+文件名（不含扩展名）就是 key，比较时**忽略大小写、下划线、短横线和空格**，并自动忽略
+`sfx_` / `se_` / `sound_` / `audio_` 前缀，所以下面这些写法都认：
+
+| 会被当成 | 可接受的写法（举例） |
 | --- | --- |
-| `BugController.cs` | 点击移动、朝向、加减速、卡住超时放弃目标；**F 键统一分发交互**（拾取 / 地洞）；**Shift 冲刺**；`useWorldLimit` 默认关闭（无限地图） |
-| `GameInput.cs` | **按键统一表**：所有交互键默认 F（`GameInput.Interact`），冲刺默认 Shift；HUD 文案也从这里取 |
-| `BugVitality.cs` | **体力**：持续下降、吃东西回复、掉光饿死（存档 + 回主菜单） |
-| `BugGrowth.cs` | **成长**：吃特殊食物升级，放大体型 / 提速 / 扩大捕食范围 / 提高体力上限；`DisplayLevel`（玩家看到的等级）与**等级门槛常量** `CrateLevel`/`TreeLevel`/`VillagerLevel` |
-| `MapProfiles.cs` | **地图类型**（荒野 / 农村 / 城市）：三张地图的密度参数表 + PlayerPrefs 记忆 |
-| `GameSettings.cs` | **玩家设置**：全局主音量（写 `AudioListener.volume` + PlayerPrefs），启动时自动套用 |
-| `HiddenValue.cs` | **不显示给玩家的隐藏数值**：物品的分量、村民的体魄 |
-| `EntityInfo.cs` | 物品 / 景物的介绍文本（给右下角悬浮窗用） |
-| `EncounterWindow.cs` | 右下角**悬浮窗**：靠近物品 / 村民时弹出介绍（村民那栏会补一句「长到几级才吃得下」），走开淡出 |
-| `WormBody.cs` | LineRenderer 尾巴：链式跟随、等宽、速度驱动摆动、捕食时收紧；`SetVisible` 供钻洞时隐藏 |
-| `BugEat.cs` | 空格进食：**以头部为中心整圈判定**（不要求朝向），按 `Edible.requiredLevel` **过滤吃不动的东西**，不同食物恢复不同体力，特殊食物触发成长；吃到村民时通知目击者 |
-| `Edible.cs` | 可吃标记：`satiety`（恢复体力，-1 = 按隐藏数值）、`growth`（长大级数）、`requiredLevel`（需要几级才吃得下） |
-| `Burrow.cs` | **地洞 / 地道**：静态表供就近查找，地道靠 `partner` 配对 |
-| `DragController.cs` / `Draggable.cs` | F 拾取/放下，物品停在头前方（手里的东西被啃掉时自动清引用、恢复移速） |
-| `Edible.cs` | 可吃食物标记（静态表随区块回收自动清理） |
-| `Highlighter.cs` / `ProximityHighlight.cs` | 物品高亮底衬与高亮等级 |
-| `VillageWorld.cs` | **无限世界流式调度**：生成/回收区块、冻结远处村民、**给地道配对** |
-| `VillageGenerator.cs` | **区块生成器**：一个区块里的道路、设施、房屋、树、食物、地洞、村民 |
-| `VillageMap.cs` | 设施锚点表（农田/摊位/长椅/树/房屋/巡逻点…），支持按距离剪枝 |
-| `VillageClock.cs` | 游戏内时间、时段、夜晚程度、时间快进 |
-| `VillagerJobs.cs` | 职业表：中文名、衣服颜色、工作描述、**看到小虫的反应** |
-| `Villager.cs` | 村民状态机 + 作息 + **视野与追/躲反应** + **目睹吃人后一律躲避（`fearsBug`）** + 左右翻转朝向 + 远距离冻结 |
-| `NightGlow.cs` | 夜里亮起来的东西（路灯、窗户、炉火） |
-| `InfiniteGround.cs` | 无限草地：跟随小虫并按贴图尺寸对齐 |
-| `YSort.cs` | 俯视 2D 深度排序（按世界 Y，绝对坐标也安全） |
-| `FollowCamera.cs` | 相机跟随 + 朝向前移 + `Snap()`（走地道后立刻贴过去） |
-| `SimpleHUD.cs` | 左上角 HUD（uGUI + TextMeshPro）：**只放小虫状态 + 操作指引** |
-| `MainMenu.cs` / `ReturnToMenu.cs` | 开始界面（标题 What a Bug？）：「开始游戏」选地图（荒野/农村/城市）、「继续游戏（地图名）」、「游戏设置」分辨率 / 屏幕模式 / 音量；Esc 返回 |
-| `SaveSystem.cs` | **存档读写**：`GameSave` 数据结构 + JSON 落盘（先写 .tmp 再替换） |
-| `AutoSave.cs` | **自动存档 + 读档**：每 5 秒存一次，失焦 / 切后台 / 退出 / 返回菜单补存，读档恢复局面 |
-| `ArtOverride.cs` / `ArtOverrideApplier.cs` | 美术覆盖表与启动套用 |
-| `Editor/ArtOverridePostprocessor.cs` | 编辑器：把上传的图片配成 Sprite 并按原素材换算 PPU |
+| `eat` | `eat.wav`、`Eat.wav`、`SFX_Eat.wav`、`se-eat.ogg`、`chew.wav` |
+| `grow` | `grow.wav`、`level_up.wav`、`LevelUp.wav`、`powerup.wav` |
+| `pickup` | `pickup.wav`、`pick_up.wav`、`grab.wav` |
+| `drop` | `drop.wav`、`put_down.wav`、`place.wav` |
+| `step` | `step.wav`、`footstep.wav`、`footsteps.wav` |
+| `ui_click` | `ui_click.wav`、`UIClick.wav`、`click.wav`、`button.wav` |
+| `bgm` | `bgm.ogg`、`bgm_game.ogg`、`game_music.ogg`、`music.ogg` |
+| `bgm_menu` | `bgm_menu.ogg`、`menu_music.ogg`、`menubgm.ogg` |
 
-### 几个必踩的坑（已处理，别改回去）
+**同一个 key 放了多个文件 → 只会用其中一个（谁先载入用谁）**，所以一个 key 只交一个文件。
+名字没对上 key 的文件（比如 `explosion.wav`）不会生效，但会在 Console 里被点名。
 
-1. `Rigidbody2D` 静止一会儿会进入睡眠，睡眠后写 `velocity` / `SetRotation` 都无效 →
-   `rb.sleepMode = RigidbodySleepMode2D.NeverSleep`（小虫和村民都设了）。
-2. `freezeRotation = true` 时 `MoveRotation()` 完全不生效 →
-   小虫的旋转必须用 `rb.SetRotation()`；**村民干脆不旋转**，只用 `Visual` 的 X 缩放做左右翻转。
-3. **整块铺在地上的贴图不能按自己的中心 Y 排序**：农田/花坛/牧场草地这样排会把站在它上半部分的角色
-   整块盖住。现在这些「地面物件」全部放进 **Ground 排序层**（草地 → 道路 → 农田 → 牧场 → 花坛 → 地洞），
-   Ground 层整体在 Default 层之下，角色/房屋/树/羊永远在上面。
-4. 区块调度必须**先回收再生成**：否则锚点表里还留着上一个位置的农田/摊位，
-   新村民会被派到几十格外「上班」，人会刷在区块外面。
-5. 村民/地洞这类「区块里的对象」被区块销毁后，外部若还持有引用会报
-   `Rigidbody2D has been destroyed`——`Villager.CanSeeBug()` 里做了 `this == null` 防护。
-6. **「把小虫放到出生点」只能做一次**：区块会反复生成/回收，如果每次建原点区块都调用 `PlacePlayer()`，
-   小虫在原点附近被重新加载时会被**瞬移回出生点**。现在用 `playerPlaced` 一次性标记 +
-   `placePlayerOnFirstChunk` 开关（读档时由 `AutoSave` 关掉，位置以存档为准）。
+### 2.4 响度与循环（最容易翻车的两点）
 
-## 10. 参数速查
+1. **响度统一**：游戏里只有**一个**总音量滑块，所有音效共用它。
+   所以"SFX 之间的相对音量"全靠素材自己对齐 —— 建议所有音效都压到**峰值 −6 ~ −3 dBFS**，
+   `grow` 这种"奖励音"可以到 −3 dBFS，`step` / `ui_click` 这种频繁播放的压到 **−12 ~ −9 dBFS** 以免吵。
+2. **BGM 无缝循环**：导出时**不要**加淡入淡出、不要留头尾静音、首尾切成零交叉。
+   播放器是"整段循环"，只要素材本身接得上，循环处就听不出接缝。
+   （想验证：把文件连续叠三遍自己听接缝处。）
 
-### 小虫尺寸（当前 = 原尺寸的 0.4x）
+### 2.5 播放行为与音量
 
-| 位置 | 字段 | 当前值 | 含义 |
-| --- | --- | --- | --- |
-| `Bug/Head` | Transform Scale | 0.112 | 头的大小 |
-| `Bug/Body` | `WormBody.width` | 0.064 | 尾巴粗细 |
-| `Bug/Body` | `WormBody.spacing` | 0.0268 | 每节间距；尾长 = spacing × 26 ≈ 0.70 |
-| `Bug/Body` | `WormBody.idleAmplitude` / `walkAmplitude` | 0.018 / 0.064 | 摆动幅度 |
-| `Bug/Body` | `WormBody.waveLength` | 0.76 | 摆动波长 |
-| `Bug` | `CircleCollider2D.radius` | 0.056 | 碰撞体积 |
-| `MoveMarker` | Transform Scale | 0.2 | 点击标记（视野放大后偏小，可调到 0.4~0.6） |
+- **播放器**：游戏启动时自动创建一个常驻播放器（`AudioOverridePlayer`），**跨场景不中断**：
+  进 `BugScene` 自动放 `bgm`，回 `MainMenu` 自动放 `bgm_menu`；同一首正在播时不会重头再来。
+- **音量**：所有声音都受开始界面「**游戏设置 → 音量**」控制（写全局 `AudioListener.volume`，存 `PlayerPrefs`，启动自动套用）。
+  音乐和音效的**相对**比例在 `AudioOverridePlayer` 的 `musicVolume`（默认 0.7）和 `sfxVolume`（默认 1）里调。
+- **导入设置自动配置**：放进目录后不需要手改 Import Settings ——
+  BGM 用**流式载入**（长音频不占内存），音效用**解压到内存 + 预载**（播放不卡顿）。
+  已经配置过的文件不会再被改动，你想手工微调随时可以。
+- 音频播放**不受画面影响**，也不需要往场景里拖任何东西。
 
-### 手感与视角
+### 2.6 自检 / 恢复默认
 
-| 位置 | 字段 | 当前值 | 作用 |
-| --- | --- | --- | --- |
-| `BugController` | `walkSpeed` / `acceleration` / `arrivalRadius` | 2.6 / — / — | 移动速度 / 加速度 / 到达判定（成长会改 walkSpeed） |
-| `BugController` | `useWorldLimit` | false | **是否限制点击范围**（无限地图关掉） |
-| `BugController` | `dashSpeed` / `dashDuration` / `dashCooldown` | 11 / 0.22 / 0.9 | 冲刺速度 / 持续 / 冷却 |
-| `BugController` | `burrowRange` / `burrowCooldown` | 0.9 / 0.5 | 钻洞交互距离 / 冷却（出洞不受冷却限制） |
-| `BugEat` | `eatRadius` / `eatAngle` | 0.7 / 360 | 捕食半径 / 夹角（360 = 整圈，只要靠近头部；成长会放大半径） |
-| `BugVitality` | `maxStamina` / `drainPerSecond` / `deathDelay` / `respawnRatio` | 100 / 0.8 / 1.8 / 0.6 | 体力上限 / 每秒掉多少 / 饿死停留 / 死后存档保留比例 |
-| `BugGrowth` | `maxLevel` / `scalePerLevel` / `speedPerLevel` / `eatRangePerLevel` / `staminaPerLevel` | 3 / 0.35 / 0.12 / 0.28 / 25 | 最高等级 / 每级体型、速度、捕食半径、体力上限加成 |
-| `BugGrowth` | `CrateLevel` / `TreeLevel` / `VillagerLevel` | 2 / 3 / 4 | **吃得下木箱 / 树 / 村民需要的等级**（玩家看到的等级口径，1 = 没长大） |
-| `GameSettings` | `MasterVolume` / `VolumeStep` | 0.8 / 0.1 | 全局主音量（`PlayerPrefs: game.volume`，直接写 `AudioListener.volume`）/ 每档 10% |
-| `EncounterWindow` | `radius` / `scanInterval` / `hideDelay` | 1.8 / 0.15 / 1.2 | 「遇到」判定距离 / 扫描间隔 / 走开后淡出延时 |
-| `GameInput` | `Interact` / `Dash` | F / LeftShift | **所有交互键统一 F**，冲刺 Shift（改这里就全改） |
-| `DragController` | `interactRange` / `holdDistance` | 1.2 / 0.7 | 交互范围 / 物品停在头前多远 |
-| `FollowCamera` | `smooth` / `aimLead` | — / 0.28 | 跟随平滑度 / 朝向前移 |
-| `Main Camera` | `Camera.orthographicSize` | 8.4 | **视野缩放**：越大看得越广、小虫越小 |
+运行游戏后看 Console：
 
-### 世界与村民
-
-| 位置 | 字段 | 当前值 | 含义 |
-| --- | --- | --- | --- |
-| `VillageWorld` | `chunkSize` / `viewRadius` / `keepRadius` | 32 / 1 / 2 | 区块大小 / 加载半径 / 回收半径 |
-| `VillageWorld` | `worldSeed` | 随机（读档时用存档里的） | 世界长相；`randomSeedEachRun` 打开时「开始游戏」会换新种子 |
-| `VillageWorld` | `freezeRadius` / `freezeCheckInterval` | 26 / 0.5 | 村民冻结距离 / 检查间隔 |
-| `VillageWorld` | `minVillagersInView` / `viewHalfSize` / `maxExtraPerChunk` | 2 / (13, 7.5) / 4 | **保证视野里至少有这么多村民** / 可见范围一半 / 每区块最多补几个 |
-| `VillageWorld` | `tunnelMinGap` / `tunnelMaxGap` | 24 / 110 | 地道两头配对的距离范围（只在本侧已加载的区块里找） |
-| `AutoSave` | `interval` / `applySaveOnStart` / `saveOnExit` | 5 / true / true | 自动存档间隔（秒）/ 进游戏读档 / 失焦退出时补存 |
-| `VillageGenerator` | `placePlayerOnFirstChunk` | true | 新开一局时把小虫放到出生点（读档时由 AutoSave 关掉） |
-| `VillageGenerator` | `hamletChance` | 0.65 | 村庄区块比例（其余是野外） |
-| `VillageGenerator` | `houseMin~Max` / `treeMin~Max` / `villagerMin~Max` | 3~5 / 10~16 / 2~4 | 每区块内容量 |
-| `VillageGenerator` | `burrowMin~Max` / `tunnelChance` | 0~2 / 0.45 | 每区块地洞数量 / 其中是地道的比例（设 0 = 只有普通地洞） |
-| `VillageGenerator` | `specialFoodChance` | 0.45 | 每区块刷出「神奇果实」（吃了长大）的概率 |
-| `VillageGenerator` | `farmChance` / `penChance` / `bakeryChance` / `smithyChance` / `stallChance` / `gardenChance` / `boardChance` | 0.7 / 0.35 / 0.22 / 0.22 / 0.8 / 0.7 / 0.4 | 设施出现概率 |
-| `VillageClock` | `dayLengthSeconds` / `startHour` / `speed` | 240 / 7 / 1 | 一天多长 / 开局时刻 / 时间倍率 |
-| `Villager` | `workMin~Max` / `chatMin~Max` / `idleMin~Max` | 5~10 / 5~11 / 1.5~4 | 干活 / 闲聊 / 发呆时长 |
-| `Villager` | `viewRadius` / `viewHalfAngle` / `awareRadius` | 5.5 / 55° / 1.4 | 视野半径 / 扇形半角 / 贴脸必被发现的距离 |
-| `Villager` | `reactMin~Max` / `reactSpeed` / `chaseDistance` / `fleeDistance` | 3~6 / 0.72 / 1.2 / 7 | 反应时长 / 反应时移速倍率 / 保持的追逐距离 / 躲开距离 |
-| `Villager` | `witnessRadius` / `witnessCloseRadius` / `afraidViewBonus` / `afraidFleeBonus` | 11 / 4.5 / 1.25 / 1.35 | 看到吃人现场算「目击」的距离 / 贴到这么近也算看到 / 怕了之后的视野倍率 / 躲远与躲久倍率 |
-| `MapProfiles` | `Apply()` | — | **荒野 / 农村 / 城市**三张地图的密度参数（完整表格见第 5 节），`PlayerPrefs: game.mapKind` |
-| `MainMenu` | `minWidth` / `minHeight` | 800 / 600 | 分辨率列表里过滤掉比这更小的档位 |
-| `Villager` | `moveSpeed` | 0.95~1.7（孩子 1.5~2.2） | 平时走路速度（比小虫慢） |
-| `BugController` | `burrowRange` / `burrowCooldown` | 0.9 / 0.5 | 钻洞的交互距离 / 两次钻洞的冷却（出洞不受冷却限制） |
-
-> 想改区块大小要注意：`VillageWorld.chunkSize` 与 `VillageGenerator.chunkSize` 必须一致
-> （`VillageWorld.Awake` 会自动对齐到 generator 的值）。
-
-## 11. 用自己的图片替换美术（含图片格式规范）
-
-把图片放进 **`Assets/Resources/ArtOverride/`** 即可，无文件时用程序化美术。
-
-**图片格式规范（完整版见该文件夹里的 `README.md`）**：
-
-| 项目 | 要求 |
+| 日志 | 含义 |
 | --- | --- |
-| 格式 | **.png**，带透明通道，直通 alpha（不要预乘），sRGB 8 位/通道 |
-| 背景 | **必须真透明**（不要白底/绿幕底） |
-| 尺寸 | 任意分辨率，最大 2048×2048；**推荐 64 像素 = 1 世界单位** |
-| 命名 | 英文小写 + 下划线 + `.png`，一个 key 一张图 |
-| 锚点 | 内容居中，四周留 1–2px 透明边 |
-| 平铺素材 | `ground.png` / `road.png` 必须**无缝可平铺**，建议 256 或 512 见方 |
-| 九宫格素材 | `rect.png` / `roundrect.png` 会被九宫格拉伸，四角保留 20px 不变形区 |
+| `[AudioOverride] 音频 N 个，可用 key：eat、bgm…` | 生效，后面列的就是已经认出来的 key |
+| `……没对上 key（名字写错了？）：xxx` | 有文件名没对上，照 2.2 / 2.3 节的表改名 |
+| `[AudioOverride] Resources/AudioOverride 里没有音频，静音运行。` | 目录是空的（默认状态） |
 
-替换对照表（友好名或原始素材名都能用）：`bug_head` / `crosshair` / `ground` / `road` /
-`rect` / `roundrect` / `disc` / `berry` / `leaf`。
+**恢复默认：把目录里的音频删掉即可。**
 
-导入时脚本会自动设成 Sprite，并按**被替换素材的世界宽度**换算 `Pixels Per Unit`，
-所以任意分辨率的图片都会占同样大小，不会破坏布局。运行日志：
-`[ArtOverride] 图片 N 张，替换了 M 个精灵。`；没生效的文件会被点名。
+---
 
-## 12. 继续开发建议
+## 3. 交付清单（可以直接照这个列表交）
 
-- **改世界长相**：换 `VillageWorld.worldSeed` 就是另一个世界；调 `hamletChance` 控制村庄密度。
-- **加职业**：`VillagerJob` 加一项 + `VillagerJobs` 三个映射 + `Villager.WorkTarget()` 一个分支 +
-  `VillageGenerator.WorkplaceFor()` 一个据点。
-- **加设施**：照 `BuildFarm()` / `BuildStall()` 写 `CreateXxx()`，用 `TryFindFreePoint` / `IsFree`
-  占位并写进 `map`，然后在 `BuildFacilities()` 里按概率调用。
-- **更省的优化**：区块回收目前是 `Destroy`，可以改成对象池；也可以给冻结的村民连 `YSort` 一起关掉。
-- **存档扩展**：想多做几个存档槽，把 `SaveSystem.FileName` 改成带索引；想存村民个人状态，
-  就在 `GameSave` 里加一个按区块记录的列表（但村民本来会随区块重建，通常不必）。
-- **音效 / BGM**：现在没有任何音频，可在 `BugEat` 吃到时、`DragController` 拾放时插 `AudioSource.PlayOneShot`；
-  音量已经统一走 `GameSettings.MasterVolume`（写 `AudioListener.volume`），新加的音频会自动受「游戏设置 → 音量」控制。
+**图片 —— 放进 `Assets/Resources/ArtOverride/`**
 
-## 13. 已知限制 / 注意
+```
+bug_head.png      128×128   头朝右
+crosshair.png      64×64    点击标记
+ground.png        256×256   草地，无缝平铺
+road.png          256×256   道路，无缝平铺
+rect.png           64×64    九宫格，四角 20px 不变形（房屋/木箱/村民身子/农田垄/围栏）
+roundrect.png      64×64    九宫格圆角矩形
+disc.png           64×64    正圆铺满画布（树冠/村民头/羊/水井/路灯/地洞/高亮底衬）
+berry.png          64×64    果子
+leaf.png           64×64    叶子
+```
 
-- **存档只有一个槽位**：`开始游戏` 会换新种子并覆盖存档（没有二次确认，也没有手动存档按钮）。
-- **饿死是「回主菜单」而不是删档**：死时会存下当前进度、体力回 60%，所以「继续游戏」还能接着玩，不会卡在「一读档就死」。
-- **村民状态不存档**：村民属于区块，读档后按种子重新生成，位置和职业与上次一致，但「当前在追谁 / 闲聊」这类临时状态不会保留。
-  **「怕小虫」（`Villager.fearsBug`）也一样**：它是目击者个人的状态，人换了就重置，不会跨存档。
-- **音量按钮控的是全局主音量**：写的是 `AudioListener.volume`，而工程里目前**还没有任何音频资源**（没有 AudioSource），
-  所以现在按 − + 听不出变化；以后加音效 / BGM 时会自动跟着这个音量走。
-- **村民美术只会左右翻转**：视野是「朝向前方的左右扇形」，所以从村民正上/正下方靠近时，只有贴得很近（`awareRadius`）才会被发现。
-- **AI 资产生成不可用**：Tuanjie AI（材质 / 天空盒等）因账号积分不足报 `NotEnoughBalance`，美术走程序化方案。
-- **中文必须用 TextMeshPro**：字体资产 `Assets/Codely/Fonts/NotoSansSC-Regular SDF.asset`
-  已加入 TMP 全局 fallback。不要用 IMGUI（`OnGUI`）写中文，那不受 TMP fallback 保护。
-- **视觉验证受额度限制**：本项目里 `analyze_multimedia` 可能报额度不足，
-  验证改动请用运行时结构化数据（Renderer / 组件字段）或人工在 Game View 里确认。
-- 场景文件用 `.scene` 扩展名（Tuanjie），不是 Unity 的 `.unity`。
-- 村民美术刻意保持极简（圆头 + 长方身子）：圆和长方形都左右对称，所以**翻转肉眼看不出差别**，
-  以后加上不对称的细节（眼睛、背包）才会体现。
+**音频 —— 放进 `Assets/Resources/AudioOverride/`**
+
+```
+eat.wav  grow.wav  pickup.wav  drop.wav  step.wav  ui_click.wav   （单声道，峰值 -6 ~ -3 dBFS）
+bgm.ogg  bgm_menu.ogg                                            （无缝循环，首尾无静音/无淡入淡出）
+```
+
+> 可以**只交其中一部分**：先交 `ground / rect / disc / bug_head` 就能看出整体风格，其余的慢慢补。
+> 交付时建议附一句「跑起来后 Console 里那行 `[ArtOverride] … / [AudioOverride] …` 的截图」，能立刻确认全部对上了。
+
+---
+
+## 4. 常见问题 / 排错
+
+| 现象 | 原因 / 处理 |
+| --- | --- |
+| 图片放进去了但没变化 | Console 看 `未匹配到素材（名字写错了？）：` 列表 → 按 1.2 节改名；确认放在 `Assets/Resources/ArtOverride/`（**不是** `Assets/Sprites/`） |
+| 替换后物件位置/大小不对 | 图片四周没留透明边距（锚点是中心）→ 把内容居中重画；或手工调该图片的 `Pixels Per Unit` |
+| 草地/道路接缝明显 | `ground` / `road` 没有做到无缝平铺（左右上下都要接得上），用 2 的幂尺寸重画 |
+| 角色被地面贴图盖住 | 这是程序里排序层的事，不是素材问题 —— 排查排序层，别改素材 |
+| 有音频但完全没声音 | ① 开始界面的「音量」是不是 0；② Console 有没有 `没对上 key`；③ 确认 ogg/wav 文件本身能播放 |
+| 脚步声糊成一片 | `step` 音频太长/有尾音 → 换成 0.05–0.15 s 的干脆脚步 |
+| BGM 一到循环处就"喘一口气" | 素材带了淡入淡出或头尾静音 → 重新导出成无缝循环（见 2.4） |
+| 音效之间音量不齐 | 素材电平没对齐 → 统一压到 −6 ~ −3 dBFS（频繁音效再低些） |
+| 想整体关掉音频/美术替换 | 把对应目录里的文件删掉即可，不需要改代码 |
+
+---
+
+## 5. 附：实现位置与可调参数（给程序看）
+
+| 内容 | 位置 |
+| --- | --- |
+| 图片 key 别名表 / 载入逻辑 | `Assets/Scripts/ArtOverride.cs` |
+| 图片启动套用 | `Assets/Scripts/ArtOverrideApplier.cs`（挂在 `BugScene/GameDirector` 上） |
+| 图片导入设置自动配置 | `Assets/Scripts/Editor/ArtOverridePostprocessor.cs` |
+| 图片目录内详细说明 | `Assets/Resources/ArtOverride/README.md` |
+| 音频 key 别名表 / 载入逻辑 | `Assets/Scripts/AudioOverride.cs`（key 常量见同文件里的 `AudioKeys`） |
+| 音频播放器（音效 + BGM 切场景） | `Assets/Scripts/AudioOverridePlayer.cs` |
+| 脚步声触发 | `Assets/Scripts/BugFootsteps.cs`（脚步间隔 `strideLength` 0.6、最短间隔 0.09 s） |
+| 音频导入设置自动配置 | `Assets/Scripts/Editor/AudioOverridePostprocessor.cs` |
+| 音效触发点 | `BugEat.cs`（吃 / 长大）、`DragController.cs`（拾取 / 放下）、`MainMenu.cs`（UI 点击） |
+| 全局音量 | `Assets/Scripts/GameSettings.cs`（`AudioListener.volume` + `PlayerPrefs: game.volume`） |
+
+改 key 名字、加新 key（比如以后的攻击音、天气环境音）：在 `AudioOverride.AliasSource` 里加一行别名、
+在 `AudioKeys` 里加一个常量，然后在需要的地方调 `AudioOverridePlayer.Play(AudioKeys.xxx)` 即可。
+
+> 备注：本项目账号的 Tuanjie AI 资产生成（材质 / 天空盒 / 3D 等）因积分不足不可用，
+> 所以图片与音频都走「人工提供 + 自动替换」这套方案，这也是这份文档存在的原因。

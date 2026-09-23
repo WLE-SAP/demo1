@@ -65,6 +65,7 @@ public class DragController : MonoBehaviour
         held = target;
         SetSimulated(held, false);
         if (bug != null) bug.IsDragging = true;
+        AudioOverridePlayer.Play(AudioKeys.Pickup);
     }
 
     /// <summary>头前方最合适的可搬动物品。</summary>
@@ -132,5 +133,6 @@ public class DragController : MonoBehaviour
         SetSimulated(held, true);
         held = null;
         if (bug != null) bug.IsDragging = false;
+        AudioOverridePlayer.Play(AudioKeys.Drop);
     }
 }

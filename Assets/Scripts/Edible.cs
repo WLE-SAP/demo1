@@ -19,7 +19,16 @@ public class Edible : MonoBehaviour
     [Tooltip("吃掉让小虫长大几级（特殊食物 > 0）")]
     public int growth;
 
+    [Tooltip("需要小虫长到几级才吃得下（玩家看到的等级口径：1 = 还没长大，每长一次 +1；0 = 不限）")]
+    public int requiredLevel;
+
     public bool IsConsumed { get; private set; }
+
+    /// <summary>小虫这个等级（<see cref="BugGrowth.DisplayLevel"/> 的口径）吃不吃得下它。</summary>
+    public bool CanBeEatenBy(int bugLevel)
+    {
+        return bugLevel >= requiredLevel;
+    }
 
     /// <summary>这个食物恢复体力的量：没单独指定就按隐藏数值（分量）算。</summary>
     public int SatietyAmount

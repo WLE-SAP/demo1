@@ -22,6 +22,10 @@ public enum VillagerState
 /// 看到小虫后按职业做不同反应——守卫/樵夫/孩子会追，长者/摊贩/面包师/牧羊人会躲，
 /// 农夫和铁匠不理会。反应时会降低移速（<see cref="reactSpeed"/>）。
 ///
+/// 但**亲眼看到小虫吃掉一个村民**之后就不一样了（见 <see cref="ReportEaten"/>）：
+/// 目击者从此见小虫就躲（<see cref="fearsBug"/>），不管自己是哪个职业，
+/// 而且更警觉（看得更远）、跑得更远更久。
+///
 /// 朝向：整体美术始终「头朝上」，不旋转刚体，只用 Visual 的 X 缩放做左右翻转。
 /// </summary>
 [RequireComponent(typeof(Rigidbody2D))]
@@ -58,6 +62,18 @@ public class Villager : MonoBehaviour
     public float fleeDistance = 7f;
     [Tooltip("选中时在 Scene 视图里画出视野扇形（仅编辑器）")]
     public bool drawViewGizmo = true;
+
+    [Header("亲眼见到小虫吃人之后")]
+    [Tooltip("目睹小虫吃掉一个村民之后，就一直躲着小虫（不再按职业反应，看到就跑）")]
+    public bool fearsBug;
+    [Tooltip("离吃人现场多近算「亲眼看到」")]
+    public float witnessRadius = 11f;
+    [Tooltip("离受害者这么近，就算没正对着也算看到（来不及躲）")]
+    public float witnessCloseRadius = 4.5f;
+    [Tooltip("怕了小虫之后更警觉：视野半径的倍率")]
+    public float afraidViewBonus = 1.25f;
+    [Tooltip("怕了小虫之后躲得更远更久：距离与持续时间的倍率")]
+    public float afraidFleeBonus = 1.35f;
 
     [Header("远距离冻结")]
     [Tooltip("被冻结时连精灵渲染一起关掉，进一步省资源")]
@@ -114,6 +130,48 @@ public class Villager : MonoBehaviour
     public float Facing { get { return facing; } }
     public string JobLabel { get { return VillagerJobs.Label(job); } }
     public bool IsWalking { get { return rb != null && rb.velocity.magnitude > 0.05f; } }
+    /// <summary>是否已经亲眼见过小虫吃人（见过就一直躲着小虫）。</summary>
+    public bool FearsBug { get { return fearsBug; } }
+    /// <summary>视野半径：怕了小虫之后更警觉，看得更远。</summary>
+    public float EffectiveViewRadius { get { return fearsBug ? viewRadius * afraidViewBonus : viewRadius; } }
+
+    /// <summary>
+    /// 小虫吃掉了一个村民：把**亲眼看到现场**的村民标成「怕」。
+    /// 看到 = 离现场够近，而且是正对着小虫（<see cref="CanSeeBug"/>），或者离受害者近到根本来不及躲。
+    /// 只影响当场看见的人（村民会随区块回收 / 重建，不写进存档）。
+    /// </summary>
+    public static void ReportEaten(Villager victim)
+    {
+        if (victim == null) return;
+
+        Vector2 scene = victim.transform.position;
+        for (int i = 0; i < All.Count; i++)
+        {
+            Villager witness = All[i];
+            if (witness == null || witness == victim) continue;
+
+            float distance = Vector2.Distance(witness.transform.position, scene);
+            if (distance > witness.witnessRadius) continue;
+            if (!witness.CanSeeBug() && distance > witness.witnessCloseRadius) continue;
+
+            witness.WitnessBugEating();
+        }
+    }
+
+    /// <summary>亲眼看到小虫吃人：态度从此改成躲避（追人的、不管事的，一律变成跑）。</summary>
+    public void WitnessBugEating()
+    {
+        if (fearsBug) return;
+        fearsBug = true;
+
+        Debug.Log("[Villager] " + displayName + "（" + JobLabel + "）亲眼看到小虫吃人，从此见到它就躲。");
+
+        if (rb == null) return;
+
+        // 现场就翻脸：放下手里的事，立刻往反方向跑
+        RefreshFleeTarget();
+        SetState(VillagerState.Flee, RandomRange(reactMin, reactMax) * afraidFleeBonus);
+    }
 
     /// <summary>是否被冻结（离玩家太远，停掉状态机与物理）。</summary>
     public bool IsFrozen { get; private set; }
@@ -161,7 +219,7 @@ public class Villager : MonoBehaviour
                 case VillagerState.Chase:
                     return "看到小虫，追过来了！";
                 case VillagerState.Flee:
-                    return "被小虫吓跑了";
+                    return fearsBug ? "见过它吃人，拼命躲开！" : "被小虫吓跑了";
                 default:
                     return clock != null && clock.CurrentPhase == VillageClock.Phase.Night ? "回家休息了" : "在原地发呆";
             }
@@ -220,8 +278,9 @@ public class Villager : MonoBehaviour
         {
             Vector2 bugPosition = BugPosition();
             float distance = Vector2.Distance(rb.position, bugPosition);
-            if (!CanSeeBug() && distance > fleeDistance * 0.8f) stateTimer = Mathf.Min(stateTimer, 0.4f);
-            if (stateTimer < 0.35f || (distance < fleeDistance * 0.6f && CanSeeBug())) RefreshFleeTarget();
+            float reach = fleeDistance * (fearsBug ? afraidFleeBonus : 1f);
+            if (!CanSeeBug() && distance > reach * 0.8f) stateTimer = Mathf.Min(stateTimer, 0.4f);
+            if (stateTimer < 0.35f || (distance < reach * 0.6f && CanSeeBug())) RefreshFleeTarget();
         }
 
         if (state == VillagerState.Commute || state == VillagerState.Chase || state == VillagerState.Flee) return;
@@ -307,36 +366,39 @@ public class Villager : MonoBehaviour
         Vector2 delta = (Vector2)bug.transform.position - rb.position;
         float distance = delta.magnitude;
         if (distance <= awareRadius) return true;
-        if (distance > viewRadius) return false;
+        if (distance > EffectiveViewRadius) return false;
         if (distance < 0.01f) return true;
 
         Vector2 look = new Vector2(facing, 0f);
         return Vector2.Angle(look, delta) <= viewHalfAngle;
     }
 
-    /// <summary>看到小虫了：按职业决定追还是躲。</summary>
+    /// <summary>看到小虫了：按职业决定追还是躲；见过小虫吃人的人一律躲。</summary>
     bool TryStartReaction()
     {
-        VillagerReaction reaction = VillagerJobs.Reaction(job);
+        VillagerReaction reaction = fearsBug ? VillagerReaction.Flee : VillagerJobs.Reaction(job);
         if (reaction == VillagerReaction.Ignore) return false;
+
+        float duration = RandomRange(reactMin, reactMax) * (fearsBug ? afraidFleeBonus : 1f);
 
         if (reaction == VillagerReaction.Chase)
         {
-            SetState(VillagerState.Chase, RandomRange(reactMin, reactMax));
+            SetState(VillagerState.Chase, duration);
             return true;
         }
 
         RefreshFleeTarget();
-        SetState(VillagerState.Flee, RandomRange(reactMin, reactMax));
+        SetState(VillagerState.Flee, duration);
         return true;
     }
 
-    /// <summary>往小虫的反方向跑一段。</summary>
+    /// <summary>往小虫的反方向跑一段（怕了小虫的人跑得更远）。</summary>
     void RefreshFleeTarget()
     {
         Vector2 away = rb.position - BugPosition();
         if (away.sqrMagnitude < 0.01f) away = Random.insideUnitCircle;
-        destination = rb.position + away.normalized * fleeDistance;
+        float reach = fleeDistance * (fearsBug ? afraidFleeBonus : 1f);
+        destination = rb.position + away.normalized * reach;
     }
 
     void OnDrawGizmosSelected()

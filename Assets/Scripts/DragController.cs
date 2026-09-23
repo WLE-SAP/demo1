@@ -35,7 +35,14 @@ public class DragController : MonoBehaviour
 
     void Update()
     {
-        if (held != null) Carry();
+        // 手里的东西可能已经被小虫啃掉了（Unity 的 == 对已销毁对象也返回 true）：
+        // 这时要清掉引用并恢复小虫的移速，否则它会一直处于「搬运中」的慢速状态
+        if (held == null)
+        {
+            if (bug != null) bug.IsDragging = false;
+            return;
+        }
+        Carry();
     }
 
     void OnDisable()

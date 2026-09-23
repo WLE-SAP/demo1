@@ -10,7 +10,7 @@
 
 ---
 
-## 1. 操作
+## 1. 操作与开始界面
 
 | 操作 | 效果 |
 | --- | --- |
@@ -20,15 +20,30 @@
 | **Shift** | 朝当前目标（没目标就朝朝向）**冲一小段**：0.22 秒冲刺 + 0.9 秒冷却 |
 | Esc | 返回开始界面 |
 
+### 开始界面
+
+主面板三个按钮：**开始游戏**（先选地图）/ **继续游戏（地图名）** / **游戏设置**，下面一行小字提示有哪三种地图。
+
+| 面板 | 内容 |
+| --- | --- |
+| 开始游戏 → **选择地图** | 三张地图各一个按钮（荒野 / 农村 / 城市），按钮上写着这个地图的 npc 多少；选完才进游戏 |
+| **游戏设置** | **分辨率**（◀ ▶ 循环切有存过的分辨率）、**屏幕模式**（全屏 / 窗口）、**音量**（− + 每档 10%）；底部「返回」 |
+
+- 分辨率 / 屏幕模式存 `PlayerPrefs`（`menu.resWidth` / `menu.resHeight` / `menu.fullscreen`），
+  启动时就套用，所以显示和实际设置一致。
+- **音量**是全局主音量（`GameSettings`），直接写 `AudioListener.volume` 并存 `PlayerPrefs`（`game.volume`），
+  换场景、重开都保留。
+- 选过的地图存 `PlayerPrefs`（`game.mapKind`），存档里也记一份 → 见第 3 节（存档）与第 5 节「地图类型」。
+
 **往任意方向走**，附近会不断刷出新村庄；走远的区块会被回收。游戏**每 5 秒自动存一次**，随时可以关掉。
 
 左上角 HUD **只显示小虫自己的信息和操作指引**，三块内容自上而下自动排布（不会互相遮挡）：
 
 | 区域 | 内容 |
 | --- | --- |
-| 操作说明 | 左键 / 空格 / F / Shift / Esc，以及「每 5 秒自动保存一次」 |
+| 操作说明 | 左键 / 空格 / F / Shift / Esc、「长大后才吃得下：木箱 2 级 / 树 3 级 / 村民 4 级」，以及「每 5 秒自动保存一次」 |
 | 小虫状态 | `已吃 N 个 · 体力 82/100 · 速度 3.0 · 2 级 · 搬运中 / 躲在地洞里 / 冲刺 · 已保存` |
-| 操作提示 | 随场合变化：`[F] 钻地洞躲起来` / `[F] 拾取箱子` / `[空格] 进食` 等 |
+| 操作提示 | 随场合变化：`[F] 钻地洞躲起来` / `[F] 拾取箱子` / `[空格] 进食` / `[空格] 长到 3 级才吃得下这个` 等 |
 | 体力条 | 一条彩色血条（绿 → 黄 → 红），**不吃东西会一直掉** |
 
 > 三块面板的位置由 `SimpleHUD.LayoutPanels()` 在运行时按上一块的实际高度往下排，改文案 / 加行都不会再叠在一起。
@@ -62,6 +77,27 @@
 实测：头 0.112 → 0.151 → 0.190 → 0.230，尾宽 0.064 → 0.131，碰撞 0.056 → 0.115，
 移速 2.6 → 3.54，捕食半径 0.7 → 1.29，体力上限 100 → 175；满级后不再长。
 
+### 长大才吃得下的东西（所有物品和 npc 都能吃）
+
+**场上所有东西都挂着 `Edible`**，但果子那样的软东西一开始就啃得动，木箱 / 树 / 村民
+要长大到一定等级才吃得下——这就是「长大」的主要意义：**等级越高，能吃的东西越多**。
+
+| 吃的东西 | 需要等级 | 字段 / 门槛常量 | 吃下去 |
+| --- | --- | --- | --- |
+| 野果子 / 嫩叶 / 神奇果实 | 1 级（一开始就行） | `requiredLevel = 0` | 恢复体力 / 长大一级 |
+| **木箱** | **2 级**（长大 1 次） | `BugGrowth.CrateLevel` | 按 `HiddenValue` 分量恢复体力 |
+| **树** | **3 级**（长大 2 次） | `BugGrowth.TreeLevel` | 同上（树的分量 18~31，很顶饱） |
+| **村民**（不分职业） | **4 级**（满级） | `BugGrowth.VillagerLevel` | 恢复 45 体力（一顿大餐） |
+
+- 等级口径是**玩家看到的等级**（`BugGrowth.DisplayLevel`：还没长大 = 1 级，每吃一颗神奇果实 +1 级），
+  HUD 里的「4 级」和门槛用的是同一套数字。
+- 等级不够时**吃不到**：`BugEat.FindTarget()` 直接跳过，HUD 会提示
+  `[空格] 长到 3 级才吃得下这个`；右下角悬浮窗在村民介绍后面也会补一句
+  `（小虫长到 4 级才吃得下它）`。
+- 想调门槛：改 `BugGrowth.CrateLevel / TreeLevel / VillagerLevel`（或某个物件自己的 `Edible.requiredLevel`）。
+- **吃掉村民会留下目击者**——见第 8 节「亲眼看到吃人之后」。木箱被啃掉时会自动从手里掉下来
+  （`DragController` 会清掉引用，不会让小虫一直卡在「搬运中」的慢速状态）。
+
 ### 隐藏数值（`HiddenValue`）
 
 **每个物品和村民都挂着一个不显示给玩家的数字**：
@@ -80,12 +116,15 @@
 - 进入游戏后**每 5 秒自动存档一次**（`AutoSave.interval`），另外在
   **窗口失焦 / 切后台 / 退出游戏 / 返回主菜单**时都会再补存一次，
   所以直接点右上角关掉游戏也不会丢进度。
-- 主菜单新增 **「继续游戏」**：有存档时可点、没存档时置灰写着「还没有存档」。
-  「开始游戏」= 新开一局（**换一个新的世界种子**）。
+- 主菜单新增 **「继续游戏」**：有存档时可点、没存档时置灰写着「还没有存档」，
+  有存档时按钮上还会写着存档是哪张地图（「继续游戏（城市）」）。
+  「开始游戏」= **先选地图**（荒野 / 农村 / 城市）再新开一局（**换一个新的世界种子**）。
 - 存档位置：`%USERPROFILE%\AppData\LocalLow\<公司名>\<产品名>\whatabug_save.json`
   （即 `Application.persistentDataPath`）。写入时先写 `.tmp` 再替换，避免正好被杀掉留下坏档。
-- 存的内容（`GameSave`）：**世界种子、小虫位置、已吃数量、当前体力、成长等级、游戏内累计小时数、本局游玩秒数、存档时间**。
-  因为区块内容是「坐标 + 种子」确定性生成的，所以只要种子对得上，走远再回来、读档后回来，村庄都一模一样。
+- 存的内容（`GameSave`）：**地图类型、世界种子、小虫位置、已吃数量、当前体力、成长等级、游戏内累计小时数、本局游玩秒数、存档时间**。
+  因为区块内容是「坐标 + 种子」确定性生成的，所以只要地图类型和种子对得上，走远再回来、读档后回来，村庄都一模一样。
+- 地图类型是存档 **2 版** 新增的字段：1 版老存档读出来没有这一项，
+  `GameSave.ResolvedMapKind` 会按 `version` 判断，老档沿用玩家在菜单里选的那张地图（不会莫名变成荒野）。
 - 村民 / 地洞不存：它们属于区块，读档后由区块重新生成（位置和职业由种子决定，和上次一致）。
 
 ## 4. 地洞与地道
@@ -127,6 +166,29 @@
   （只有村民会走动）。
 - 区块回收时会 `Destroy` 整个区块物体，并把 `VillageMap` 里对应的锚点剪掉，内存不会无限涨。
 
+### 地图类型：荒野 / 农村 / 城市
+
+「开始游戏」时选的那张地图（`MapKind`）由 `VillageWorld.Start` 调 `VillageWorld.ApplyMapKind()` 套用：
+世界的生成方式完全没变（还是区块坐标 + 种子），变的只是**一组密度参数**——「村子有多密、npc 有多少」。
+
+| 参数 | 荒野 | 农村 | 城市 |
+| --- | --- | --- | --- |
+| `hamletChance` 村庄区块比例 | 0.15 | 0.65 | **1.0**（全是城区） |
+| `villagerMin~Max` 每区块 npc | 0~1 | 2~4 | **6~9** |
+| `houseMin~Max` 房屋 | 0~1 | 3~5 | 6~9 |
+| `treeMin~Max` 树 | 12~18 | 10~16 | 3~7 |
+| `foodMin~Max` 食物 / `crateMax` 木箱 | 7~11 / 1 | 5~8 / 2 | 8~12 / 3 |
+| `buildFacilities` 农田摊位等 | false | true | true（摊位 95%、面包房铁匠铺各 35%） |
+| `keepVillagersInView` / `minVillagersInView` | false / 0 | true / 2 | true / **5** |
+| `maxExtraPerChunk` 每区块最多补人 | 0 | 4 | 6 |
+| `freezeRadius` 冻结距离 | 26 | 26 | 22（人太多，冻近一点省性能） |
+| **实测：9 个区块生成多少村民（同一种子）** | **6** | **26** | **74** |
+
+- 改密度就改 `MapProfiles.ApplyToGenerator()` / `ApplyToWorld()` 里的数字；
+  `MapProfiles.Label()` / `Description()` 是主菜单按钮上的文案。
+- 荒野特意关掉「保证视野里有村民」（`keepVillagersInView = false`），否则荒地里会凭空补人出来。
+- 地图记在 `PlayerPrefs`（`game.mapKind`）和存档里，「继续游戏」用存档那张地图还原世界。
+
 ### 村民冻结（省资源）
 
 `VillageWorld` 每 0.5 秒检查一次：离小虫超过 `freezeRadius`（26）的村民会调用
@@ -156,7 +218,9 @@
 | `GameDirector` | DragController + SimpleHUD + ReturnToMenu + ProximityHighlight + **AutoSave** + ArtOverrideApplier | 全局逻辑 + 自动存档 |
 | `Village` | **VillageWorld** + VillageGenerator + VillageClock + VillageMap | 流式调度、区块生成、游戏内时间、设施锚点表 |
 | `HUD` | Canvas + CanvasScaler | 左上角操作说明 + 小虫状态（2 行） |
-| MainMenu `Canvas/Panel` | **ContinueButton** + StartButton | 继续游戏 / 开始游戏 |
+| MainMenu `Canvas/Panel` | **StartButton** + **ContinueButton** + **SettingsButton** + 一行地图提示 | 开始游戏（→选地图）/ 继续游戏 / 游戏设置 |
+| MainMenu `Canvas/SettingsPanel` | 分辨率 ◀▶、屏幕模式、音量 − + 、返回 | **游戏设置**（默认隐藏，点「游戏设置」才显示） |
+| MainMenu `Canvas/MapPanel` | 荒野 / 农村 / 城市 三个按钮 + 返回 | **选择地图**（默认隐藏，点「开始游戏」才显示） |
 
 > `Environment` 下原来还有 `Fence_0..67` 和 `Boundaries`（四面墙），为了做无限地图已经删除。
 
@@ -218,6 +282,24 @@
 看到一个村民被摆到小虫面前就会按职业进入 `Chase`（追，保持 `chaseDistance`=1.2 不会贴脸）或
 `Flee`（往反方向跑 `fleeDistance`=7），反应持续 `reactMin~Max` 秒，之后回到原本的作息安排。
 
+> 上面这张表是**没见过小虫吃人**时的反应。见过之后就只有一种反应了 —— 见下一节。
+
+### 亲眼看到吃人之后：目击者一律改成躲避
+
+小虫吃到村民时（`BugEat`）会喊一声 `Villager.ReportEaten(victim)`，**当场目击**的村民会被永久标成「怕」：
+
+- **算不算目击**：离吃人的地方 ≤ `witnessRadius`(11)，**并且**是亲眼看到的
+  （`CanSeeBug()` 小虫在视野扇形里，或者离受害者近到 ≤ `witnessCloseRadius`(4.5) 根本来不及躲）。
+- **态度改写**：`fearsBug = true` 之后，不管它原本是「追」（守卫 / 樵夫 / 孩子）还是「无视」（农夫 / 铁匠），
+  看到小虫**一律躲**（`TryStartReaction()` 直接用 Flee 覆盖职业反应）。
+- **当场就翻脸**：正在追小虫的守卫会立刻掉头跑，不会先把这一段追完。
+- **更警觉、跑得更凶**：视野半径 ×`afraidViewBonus`(1.25)，躲开的距离与持续时间 ×`afraidFleeBonus`(1.35)，
+  悬浮窗里的状态会显示「见过它吃人，拼命躲开！」。
+- **只影响当场看到的人**：没看到的村民（比如 16 格外那个）态度不变；村民本身不存档，
+  被区块回收 / 读档重建后就是「没见过」的新村民了。
+
+也就是说：**等级不够时村民是「会走路的危险」，满级之后吃一个人，附近的人就再也不敢靠近你了。**
+
 **反应时会降低移速**：`Villager.reactSpeed = 0.72`。村民基础速度也从 1.1~2.1 降到
 **0.95~1.7**（孩子 1.5~2.2），所以：
 
@@ -265,15 +347,17 @@ Chase（看到小虫追过来）  Flee（看到小虫躲开）
 | `BugController.cs` | 点击移动、朝向、加减速、卡住超时放弃目标；**F 键统一分发交互**（拾取 / 地洞）；**Shift 冲刺**；`useWorldLimit` 默认关闭（无限地图） |
 | `GameInput.cs` | **按键统一表**：所有交互键默认 F（`GameInput.Interact`），冲刺默认 Shift；HUD 文案也从这里取 |
 | `BugVitality.cs` | **体力**：持续下降、吃东西回复、掉光饿死（存档 + 回主菜单） |
-| `BugGrowth.cs` | **成长**：吃特殊食物升级，放大体型 / 提速 / 扩大捕食范围 / 提高体力上限 |
+| `BugGrowth.cs` | **成长**：吃特殊食物升级，放大体型 / 提速 / 扩大捕食范围 / 提高体力上限；`DisplayLevel`（玩家看到的等级）与**等级门槛常量** `CrateLevel`/`TreeLevel`/`VillagerLevel` |
+| `MapProfiles.cs` | **地图类型**（荒野 / 农村 / 城市）：三张地图的密度参数表 + PlayerPrefs 记忆 |
+| `GameSettings.cs` | **玩家设置**：全局主音量（写 `AudioListener.volume` + PlayerPrefs），启动时自动套用 |
 | `HiddenValue.cs` | **不显示给玩家的隐藏数值**：物品的分量、村民的体魄 |
 | `EntityInfo.cs` | 物品 / 景物的介绍文本（给右下角悬浮窗用） |
-| `EncounterWindow.cs` | 右下角**悬浮窗**：靠近物品 / 村民时弹出介绍，走开淡出 |
+| `EncounterWindow.cs` | 右下角**悬浮窗**：靠近物品 / 村民时弹出介绍（村民那栏会补一句「长到几级才吃得下」），走开淡出 |
 | `WormBody.cs` | LineRenderer 尾巴：链式跟随、等宽、速度驱动摆动、捕食时收紧；`SetVisible` 供钻洞时隐藏 |
-| `BugEat.cs` | 空格进食：**以头部为中心整圈判定**（不要求朝向），不同食物恢复不同体力，特殊食物触发成长 |
-| `Edible.cs` | 可吃食物标记：`satiety`（恢复体力，-1 = 按隐藏数值）、`growth`（长大级数） |
+| `BugEat.cs` | 空格进食：**以头部为中心整圈判定**（不要求朝向），按 `Edible.requiredLevel` **过滤吃不动的东西**，不同食物恢复不同体力，特殊食物触发成长；吃到村民时通知目击者 |
+| `Edible.cs` | 可吃标记：`satiety`（恢复体力，-1 = 按隐藏数值）、`growth`（长大级数）、`requiredLevel`（需要几级才吃得下） |
 | `Burrow.cs` | **地洞 / 地道**：静态表供就近查找，地道靠 `partner` 配对 |
-| `DragController.cs` / `Draggable.cs` | F 拾取/放下，物品停在头前方 |
+| `DragController.cs` / `Draggable.cs` | F 拾取/放下，物品停在头前方（手里的东西被啃掉时自动清引用、恢复移速） |
 | `Edible.cs` | 可吃食物标记（静态表随区块回收自动清理） |
 | `Highlighter.cs` / `ProximityHighlight.cs` | 物品高亮底衬与高亮等级 |
 | `VillageWorld.cs` | **无限世界流式调度**：生成/回收区块、冻结远处村民、**给地道配对** |
@@ -281,13 +365,13 @@ Chase（看到小虫追过来）  Flee（看到小虫躲开）
 | `VillageMap.cs` | 设施锚点表（农田/摊位/长椅/树/房屋/巡逻点…），支持按距离剪枝 |
 | `VillageClock.cs` | 游戏内时间、时段、夜晚程度、时间快进 |
 | `VillagerJobs.cs` | 职业表：中文名、衣服颜色、工作描述、**看到小虫的反应** |
-| `Villager.cs` | 村民状态机 + 作息 + **视野与追/躲反应** + 左右翻转朝向 + 远距离冻结 |
+| `Villager.cs` | 村民状态机 + 作息 + **视野与追/躲反应** + **目睹吃人后一律躲避（`fearsBug`）** + 左右翻转朝向 + 远距离冻结 |
 | `NightGlow.cs` | 夜里亮起来的东西（路灯、窗户、炉火） |
 | `InfiniteGround.cs` | 无限草地：跟随小虫并按贴图尺寸对齐 |
 | `YSort.cs` | 俯视 2D 深度排序（按世界 Y，绝对坐标也安全） |
 | `FollowCamera.cs` | 相机跟随 + 朝向前移 + `Snap()`（走地道后立刻贴过去） |
 | `SimpleHUD.cs` | 左上角 HUD（uGUI + TextMeshPro）：**只放小虫状态 + 操作指引** |
-| `MainMenu.cs` / `ReturnToMenu.cs` | 开始界面（标题 What a Bug？，继续游戏 / 开始游戏）/ Esc 返回 |
+| `MainMenu.cs` / `ReturnToMenu.cs` | 开始界面（标题 What a Bug？）：「开始游戏」选地图（荒野/农村/城市）、「继续游戏（地图名）」、「游戏设置」分辨率 / 屏幕模式 / 音量；Esc 返回 |
 | `SaveSystem.cs` | **存档读写**：`GameSave` 数据结构 + JSON 落盘（先写 .tmp 再替换） |
 | `AutoSave.cs` | **自动存档 + 读档**：每 5 秒存一次，失焦 / 切后台 / 退出 / 返回菜单补存，读档恢复局面 |
 | `ArtOverride.cs` / `ArtOverrideApplier.cs` | 美术覆盖表与启动套用 |
@@ -335,6 +419,8 @@ Chase（看到小虫追过来）  Flee（看到小虫躲开）
 | `BugEat` | `eatRadius` / `eatAngle` | 0.7 / 360 | 捕食半径 / 夹角（360 = 整圈，只要靠近头部；成长会放大半径） |
 | `BugVitality` | `maxStamina` / `drainPerSecond` / `deathDelay` / `respawnRatio` | 100 / 0.8 / 1.8 / 0.6 | 体力上限 / 每秒掉多少 / 饿死停留 / 死后存档保留比例 |
 | `BugGrowth` | `maxLevel` / `scalePerLevel` / `speedPerLevel` / `eatRangePerLevel` / `staminaPerLevel` | 3 / 0.35 / 0.12 / 0.28 / 25 | 最高等级 / 每级体型、速度、捕食半径、体力上限加成 |
+| `BugGrowth` | `CrateLevel` / `TreeLevel` / `VillagerLevel` | 2 / 3 / 4 | **吃得下木箱 / 树 / 村民需要的等级**（玩家看到的等级口径，1 = 没长大） |
+| `GameSettings` | `MasterVolume` / `VolumeStep` | 0.8 / 0.1 | 全局主音量（`PlayerPrefs: game.volume`，直接写 `AudioListener.volume`）/ 每档 10% |
 | `EncounterWindow` | `radius` / `scanInterval` / `hideDelay` | 1.8 / 0.15 / 1.2 | 「遇到」判定距离 / 扫描间隔 / 走开后淡出延时 |
 | `GameInput` | `Interact` / `Dash` | F / LeftShift | **所有交互键统一 F**，冲刺 Shift（改这里就全改） |
 | `DragController` | `interactRange` / `holdDistance` | 1.2 / 0.7 | 交互范围 / 物品停在头前多远 |
@@ -361,6 +447,9 @@ Chase（看到小虫追过来）  Flee（看到小虫躲开）
 | `Villager` | `workMin~Max` / `chatMin~Max` / `idleMin~Max` | 5~10 / 5~11 / 1.5~4 | 干活 / 闲聊 / 发呆时长 |
 | `Villager` | `viewRadius` / `viewHalfAngle` / `awareRadius` | 5.5 / 55° / 1.4 | 视野半径 / 扇形半角 / 贴脸必被发现的距离 |
 | `Villager` | `reactMin~Max` / `reactSpeed` / `chaseDistance` / `fleeDistance` | 3~6 / 0.72 / 1.2 / 7 | 反应时长 / 反应时移速倍率 / 保持的追逐距离 / 躲开距离 |
+| `Villager` | `witnessRadius` / `witnessCloseRadius` / `afraidViewBonus` / `afraidFleeBonus` | 11 / 4.5 / 1.25 / 1.35 | 看到吃人现场算「目击」的距离 / 贴到这么近也算看到 / 怕了之后的视野倍率 / 躲远与躲久倍率 |
+| `MapProfiles` | `Apply()` | — | **荒野 / 农村 / 城市**三张地图的密度参数（完整表格见第 5 节），`PlayerPrefs: game.mapKind` |
+| `MainMenu` | `minWidth` / `minHeight` | 800 / 600 | 分辨率列表里过滤掉比这更小的档位 |
 | `Villager` | `moveSpeed` | 0.95~1.7（孩子 1.5~2.2） | 平时走路速度（比小虫慢） |
 | `BugController` | `burrowRange` / `burrowCooldown` | 0.9 / 0.5 | 钻洞的交互距离 / 两次钻洞的冷却（出洞不受冷却限制） |
 
@@ -400,13 +489,17 @@ Chase（看到小虫追过来）  Flee（看到小虫躲开）
 - **更省的优化**：区块回收目前是 `Destroy`，可以改成对象池；也可以给冻结的村民连 `YSort` 一起关掉。
 - **存档扩展**：想多做几个存档槽，把 `SaveSystem.FileName` 改成带索引；想存村民个人状态，
   就在 `GameSave` 里加一个按区块记录的列表（但村民本来会随区块重建，通常不必）。
-- **音效 / BGM**：现在没有任何音频，可在 `BugEat` 吃到时、`DragController` 拾放时插 `AudioSource.PlayOneShot`。
+- **音效 / BGM**：现在没有任何音频，可在 `BugEat` 吃到时、`DragController` 拾放时插 `AudioSource.PlayOneShot`；
+  音量已经统一走 `GameSettings.MasterVolume`（写 `AudioListener.volume`），新加的音频会自动受「游戏设置 → 音量」控制。
 
 ## 13. 已知限制 / 注意
 
 - **存档只有一个槽位**：`开始游戏` 会换新种子并覆盖存档（没有二次确认，也没有手动存档按钮）。
 - **饿死是「回主菜单」而不是删档**：死时会存下当前进度、体力回 60%，所以「继续游戏」还能接着玩，不会卡在「一读档就死」。
 - **村民状态不存档**：村民属于区块，读档后按种子重新生成，位置和职业与上次一致，但「当前在追谁 / 闲聊」这类临时状态不会保留。
+  **「怕小虫」（`Villager.fearsBug`）也一样**：它是目击者个人的状态，人换了就重置，不会跨存档。
+- **音量按钮控的是全局主音量**：写的是 `AudioListener.volume`，而工程里目前**还没有任何音频资源**（没有 AudioSource），
+  所以现在按 − + 听不出变化；以后加音效 / BGM 时会自动跟着这个音量走。
 - **村民美术只会左右翻转**：视野是「朝向前方的左右扇形」，所以从村民正上/正下方靠近时，只有贴得很近（`awareRadius`）才会被发现。
 - **AI 资产生成不可用**：Tuanjie AI（材质 / 天空盒等）因账号积分不足报 `NotEnoughBalance`，美术走程序化方案。
 - **中文必须用 TextMeshPro**：字体资产 `Assets/Codely/Fonts/NotoSansSC-Regular SDF.asset`

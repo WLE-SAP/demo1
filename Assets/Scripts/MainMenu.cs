@@ -5,23 +5,43 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 /// <summary>
-/// 开始界面：分辨率选择、全屏/窗口切换、继续游戏、开始新游戏。
-/// 「继续游戏」只有在存在可用存档时才可点（游戏里每 5 秒自动存一次）。
+/// 开始界面：
+/// <list type="bullet">
+/// <item>「开始游戏」先弹地图选择（荒野 / 农村 / 城市，区别是 npc 有多少），选完才进游戏；</item>
+/// <item>「继续游戏」读上次的存档（含存档里记下的地图类型），没有存档就点不了；</item>
+/// <item>「游戏设置」里放分辨率、屏幕模式与音量（音量是全局主音量，写 PlayerPrefs）。</item>
+/// </list>
 /// </summary>
 public class MainMenu : MonoBehaviour
 {
     [Header("场景")]
     public string gameSceneName = "BugScene";
 
-    [Header("UI")]
+    [Header("主面板")]
+    public GameObject mainPanel;
+    public Button startButton;
+    public Button continueButton;
+    public Button settingsButton;
+    public TMP_Text continueLabel;
+
+    [Header("游戏设置面板")]
+    public GameObject settingsPanel;
     public TMP_Text resolutionLabel;
     public TMP_Text fullscreenLabel;
+    public TMP_Text volumeLabel;
     public Button prevButton;
     public Button nextButton;
     public Button fullscreenButton;
-    public Button startButton;
-    public Button continueButton;
-    public TMP_Text continueLabel;
+    public Button volumeDownButton;
+    public Button volumeUpButton;
+    public Button settingsBackButton;
+
+    [Header("地图选择面板")]
+    public GameObject mapPanel;
+    public Button wildernessButton;
+    public Button villageButton;
+    public Button cityButton;
+    public Button mapBackButton;
 
     [Header("分辨率")]
     public int minWidth = 800;
@@ -40,6 +60,8 @@ public class MainMenu : MonoBehaviour
         BuildOptions();
         LoadSaved();
         WireButtons();
+        GameSettings.Apply();
+        ShowMainPanel();     // 打开时只显示主面板（设置 / 地图面板先收起来）
         // 启动时就把上次保存的分辨率/屏幕模式应用上，避免显示与实际不一致
         Apply();
     }
@@ -76,16 +98,57 @@ public class MainMenu : MonoBehaviour
 
     void WireButtons()
     {
+        // 主面板
+        if (startButton != null) startButton.onClick.AddListener(OpenMapPanel);
+        if (continueButton != null) continueButton.onClick.AddListener(ContinueGame);
+        if (settingsButton != null) settingsButton.onClick.AddListener(OpenSettings);
+
+        // 游戏设置
         if (prevButton != null) prevButton.onClick.AddListener(() => Step(-1));
         if (nextButton != null) nextButton.onClick.AddListener(() => Step(1));
         if (fullscreenButton != null) fullscreenButton.onClick.AddListener(ToggleFullscreen);
-        if (startButton != null) startButton.onClick.AddListener(StartGame);
-        if (continueButton != null) continueButton.onClick.AddListener(ContinueGame);
+        if (volumeDownButton != null) volumeDownButton.onClick.AddListener(() => StepVolume(-GameSettings.VolumeStep));
+        if (volumeUpButton != null) volumeUpButton.onClick.AddListener(() => StepVolume(GameSettings.VolumeStep));
+        if (settingsBackButton != null) settingsBackButton.onClick.AddListener(ShowMainPanel);
+
+        // 地图选择
+        if (wildernessButton != null) wildernessButton.onClick.AddListener(() => StartGame(MapKind.Wilderness));
+        if (villageButton != null) villageButton.onClick.AddListener(() => StartGame(MapKind.Village));
+        if (cityButton != null) cityButton.onClick.AddListener(() => StartGame(MapKind.City));
+        if (mapBackButton != null) mapBackButton.onClick.AddListener(ShowMainPanel);
 
         RefreshContinueButton();
     }
 
-    /// <summary>有存档才让点「继续游戏」，并把状态写在按钮上。</summary>
+    // ---------------- 面板切换 ----------------
+
+    /// <summary>回到主面板（关掉设置 / 地图选择）。</summary>
+    public void ShowMainPanel()
+    {
+        if (settingsPanel != null) settingsPanel.SetActive(false);
+        if (mapPanel != null) mapPanel.SetActive(false);
+        if (mainPanel != null) mainPanel.SetActive(true);
+        RefreshLabels();
+    }
+
+    /// <summary>打开「游戏设置」（分辨率 / 屏幕模式 / 音量）。</summary>
+    public void OpenSettings()
+    {
+        if (mainPanel != null) mainPanel.SetActive(false);
+        if (mapPanel != null) mapPanel.SetActive(false);
+        if (settingsPanel != null) settingsPanel.SetActive(true);
+        RefreshLabels();
+    }
+
+    /// <summary>「开始游戏」：先让玩家选地图，选完才真正开局。</summary>
+    public void OpenMapPanel()
+    {
+        if (mainPanel != null) mainPanel.SetActive(false);
+        if (settingsPanel != null) settingsPanel.SetActive(false);
+        if (mapPanel != null) mapPanel.SetActive(true);
+    }
+
+    /// <summary>有存档才让点「继续游戏」，并把存档里的地图类型写在按钮上。</summary>
     void RefreshContinueButton()
     {
         if (continueButton == null) return;
@@ -97,7 +160,7 @@ public class MainMenu : MonoBehaviour
         if (continueLabel == null) return;
         if (hasSave)
         {
-            continueLabel.text = "继续游戏";
+            continueLabel.text = "继续游戏（" + MapProfiles.Label(save.ResolvedMapKind) + "）";
             continueLabel.color = Color.white;
         }
         else
@@ -115,7 +178,10 @@ public class MainMenu : MonoBehaviour
             resolutionLabel.text = r.x + " x " + r.y;
         }
         if (fullscreenLabel != null) fullscreenLabel.text = fullscreen ? "全屏" : "窗口";
+        if (volumeLabel != null) volumeLabel.text = GameSettings.VolumeText;
     }
+
+    // ---------------- 分辨率 / 屏幕模式 ----------------
 
     public void Step(int delta)
     {
@@ -130,6 +196,7 @@ public class MainMenu : MonoBehaviour
         Apply();
     }
 
+    /// <summary>把当前的分辨率 / 屏幕模式套用上并存起来。</summary>
     public void Apply()
     {
         if (options.Count == 0) return;
@@ -144,15 +211,30 @@ public class MainMenu : MonoBehaviour
         RefreshLabels();
     }
 
-    /// <summary>开始新的一局（会换一个新的世界种子，存档在进入游戏后马上被覆盖）。</summary>
-    public void StartGame()
+    // ---------------- 音量 ----------------
+
+    /// <summary>音量 ± 一档（直接听到效果，不需要确认）。</summary>
+    public void StepVolume(float delta)
     {
+        GameSettings.StepVolume(delta);
+        RefreshLabels();
+    }
+
+    // ---------------- 开局 ----------------
+
+    /// <summary>
+    /// 选了地图后真正开局：记下地图类型（世界按它生成、存档也带上它），
+    /// 新开一局会换一个新的世界种子（存档在进入游戏后马上被覆盖）。
+    /// </summary>
+    public void StartGame(MapKind kind)
+    {
+        MapProfiles.Current = kind;
         Apply();
         SaveSystem.ContinueRequested = false;
         SceneManager.LoadScene(gameSceneName);
     }
 
-    /// <summary>读档继续上次的局面。</summary>
+    /// <summary>读档继续上次的局面（地图类型用存档里记的那张）。</summary>
     public void ContinueGame()
     {
         Apply();

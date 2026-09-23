@@ -34,6 +34,10 @@ public class VillageWorld : MonoBehaviour
     [Tooltip("流式检查间隔（秒）")]
     public float streamInterval = 0.25f;
 
+    [Header("地图类型（荒野 / 农村 / 城市）")]
+    [Tooltip("决定村子密度与 npc 多少；主菜单选完地图后由 ApplyMapKind 覆盖")]
+    public MapKind mapKind = MapKind.Village;
+
     [Header("村民冻结（省资源）")]
     public bool freezeFarVillagers = true;
     [Tooltip("离小虫超过这个距离的村民会被冻结")]
@@ -98,24 +102,44 @@ public class VillageWorld : MonoBehaviour
     {
         // AutoSave（如果在 GameDirector 上）可能已经先读过档并把世界建好了，别重复生成
         if (built) return;
-        // 玩家在主菜单点了「继续游戏」：等 AutoSave 用存档里的种子来建
+        // 玩家在主菜单点了「继续游戏」：等 AutoSave 用存档里的地图类型与种子来建
         if (SaveSystem.ContinueRequested) return;
 
         if (randomSeedEachRun) worldSeed = Random.Range(1, int.MaxValue);
+        ApplyMapKind(MapProfiles.Current);
         Stream(true);
     }
 
-    /// <summary>用指定种子重建整个世界（读档用）。</summary>
-    public void LoadWorld(int seed)
+    /// <summary>
+    /// 套用地图类型（必须在建区块之前调用）：把荒野 / 农村 / 城市的密度参数
+    /// 覆盖到生成器与流式加载器上，之后每个区块都按这套参数生成。
+    /// </summary>
+    public void ApplyMapKind(MapKind kind)
+    {
+        mapKind = kind;
+        MapProfiles.Current = kind;
+        MapProfiles.Apply(kind, builder, this);
+    }
+
+    /// <summary>用指定地图与种子重建整个世界（读档用）。</summary>
+    public void LoadWorld(int seed, MapKind kind)
     {
         worldSeed = seed;
+        ApplyMapKind(kind);
         Rebuild();
+    }
+
+    /// <summary>用指定种子重建整个世界（地图类型沿用当前选中的）。</summary>
+    public void LoadWorld(int seed)
+    {
+        LoadWorld(seed, MapProfiles.Current);
     }
 
     /// <summary>换一个随机种子重新开一局。</summary>
     public void NewWorld()
     {
         worldSeed = Random.Range(1, int.MaxValue);
+        ApplyMapKind(MapProfiles.Current);
         Rebuild();
     }
 

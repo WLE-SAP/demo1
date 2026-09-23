@@ -97,11 +97,11 @@ public class AutoSave : MonoBehaviour
             return;
         }
 
-        // 1) 先用存档里的种子重建世界（含出生点附近）；位置以存档为准，不要再把小虫放回出生点
+        // 1) 先用存档里的地图类型与种子重建世界（含出生点附近）；位置以存档为准，不要再把小虫放回出生点
         if (world != null)
         {
             if (world.builder != null) world.builder.placePlayerOnFirstChunk = false;
-            world.LoadWorld(save.worldSeed);
+            world.LoadWorld(save.worldSeed, save.ResolvedMapKind);
         }
 
         // 2) 再把小虫放回原位
@@ -123,7 +123,8 @@ public class AutoSave : MonoBehaviour
         if (clock != null) clock.RestoreHours(save.clockHours);
         PlaySeconds = save.playSeconds;
 
-        Debug.Log("[Save] 已读取存档：" + save.savedAt + " 种子=" + save.worldSeed
+        Debug.Log("[Save] 已读取存档：" + save.savedAt + " 地图=" + MapProfiles.Label(save.ResolvedMapKind)
+            + " 种子=" + save.worldSeed
             + " 位置=(" + save.playerX.ToString("F1") + "," + save.playerY.ToString("F1") + ") 已吃=" + save.eaten
             + " 体力=" + save.stamina.ToString("F0") + " 成长=" + save.growthLevel + "级");
     }
@@ -135,6 +136,7 @@ public class AutoSave : MonoBehaviour
 
         GameSave save = new GameSave();
         save.worldSeed = world != null ? world.worldSeed : 0;
+        save.mapKind = (int)(world != null ? world.mapKind : MapProfiles.Current);
         save.playerX = bug.transform.position.x;
         save.playerY = bug.transform.position.y;
         save.eaten = eat != null ? eat.EatenCount : 0;

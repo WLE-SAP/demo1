@@ -11,6 +11,8 @@ public class GameSave
     public int version = SaveSystem.CurrentVersion;
     /// <summary>世界种子：决定这一局的世界长什么样。</summary>
     public int worldSeed = 20260922;
+    /// <summary>地图类型（<see cref="MapKind"/>）：和种子一起决定村子密度与 npc 数量。2 版新增。</summary>
+    public int mapKind = (int)MapKind.Village;
     /// <summary>小虫的位置。</summary>
     public float playerX;
     public float playerY;
@@ -26,6 +28,15 @@ public class GameSave
     public float playSeconds;
     /// <summary>存档时间，便于排查。</summary>
     public string savedAt = "";
+
+    /// <summary>
+    /// 这一局的地图类型。1 版老存档没记这个字段（读出来是 0 = 荒野），
+    /// 所以按版本判断：老档一律沿用玩家在菜单里选的那张地图。
+    /// </summary>
+    public MapKind ResolvedMapKind
+    {
+        get { return version >= 2 ? (MapKind)Mathf.Clamp(mapKind, 0, 2) : MapProfiles.Current; }
+    }
 }
 
 /// <summary>
@@ -34,7 +45,8 @@ public class GameSave
 /// </summary>
 public static class SaveSystem
 {
-    public const int CurrentVersion = 1;
+    /// <summary>2 版起存档里多了地图类型（mapKind）。</summary>
+    public const int CurrentVersion = 2;
     const string FileName = "whatabug_save.json";
 
     /// <summary>主菜单点了「继续游戏」后置 true，游戏场景读档时用。</summary>

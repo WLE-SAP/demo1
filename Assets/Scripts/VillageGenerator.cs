@@ -792,7 +792,13 @@ public class VillageGenerator : MonoBehaviour
         EntityInfo info = go.AddComponent<EntityInfo>();
         info.title = "树";
         info.kind = "景物";
-        info.description = "挡住去路的树。小虫可以绕开它，樵夫会来这儿砍柴。";
+        info.description = "挡住去路的树。小虫可以绕开它，樵夫会来这儿砍柴；"
+            + "长到 " + BugGrowth.TreeLevel + " 级以后，连树也啃得动。";
+
+        // 树也能吃，只是要长到 3 级（挡住路的大树 = 一顿大餐）
+        Edible edible = go.AddComponent<Edible>();
+        edible.nutrition = 4;
+        edible.requiredLevel = BugGrowth.TreeLevel;
 
         if (map != null) map.trees.Add(position);
     }
@@ -931,7 +937,13 @@ public class VillageGenerator : MonoBehaviour
         EntityInfo info = go.AddComponent<EntityInfo>();
         info.title = "木箱";
         info.kind = "道具";
-        info.description = "搬到哪算哪的箱子。站在它前面按 F 就能搬起来，搬运时小虫会变慢。";
+        info.description = "搬到哪算哪的箱子。站在它前面按 F 就能搬起来，搬运时小虫会变慢；"
+            + "长到 " + BugGrowth.CrateLevel + " 级以后可以直接啃掉。";
+
+        // 木箱也能吃，要长到 2 级（HiddenValue 的分量决定吃下去回多少体力）
+        Edible edible = go.AddComponent<Edible>();
+        edible.nutrition = 3;
+        edible.requiredLevel = BugGrowth.CrateLevel;
 
         // Highlighter 要在 YSort 之前加，保证它生成的发光底衬也被纳入深度排序
         go.AddComponent<Highlighter>().Setup(roundRectSprite);
@@ -1049,6 +1061,13 @@ public class VillageGenerator : MonoBehaviour
         hidden.value = grit;
         hidden.note = "体魄：影响追逐耐心与速度";
         float gritScale = Mathf.Lerp(0.75f, 1.35f, (grit - 2) / 8f);
+
+        // npc 也能吃：小虫长到满级（4 级）之后，村民就是「会走路的食物」。
+        // 吃的时候现场目击的村民会从此躲着小虫（见 Villager.ReportEaten）。
+        Edible edible = go.AddComponent<Edible>();
+        edible.nutrition = 10;
+        edible.satiety = 45;
+        edible.requiredLevel = BugGrowth.VillagerLevel;
 
         // 极简美术：一个长方形当身子 + 一个圆当头。
         // 整体保持「头朝上」的姿势，移动时由 Villager 只做左右翻转，不做旋转。

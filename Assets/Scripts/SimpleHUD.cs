@@ -51,6 +51,7 @@ public class SimpleHUD : MonoBehaviour
         "F：拾取 / 放下、钻地洞 / 出洞\n" +
         "Shift：朝目标冲一小段\n" +
         "Esc：返回开始界面\n" +
+        "长大后才吃得下：木箱 2 级 / 树 3 级 / 村民 4 级\n" +
         "每 5 秒自动保存一次";
 
     float nextRefresh;
@@ -125,7 +126,7 @@ public class SimpleHUD : MonoBehaviour
         string line = "已吃 " + (eat != null ? eat.EatenCount : 0) + " 个";
         if (vitality != null) line += " · 体力 " + Mathf.CeilToInt(vitality.Stamina) + "/" + Mathf.RoundToInt(vitality.maxStamina);
         line += " · 速度 " + bug.CurrentSpeed.ToString("0.0");
-        if (growth != null && growth.level > 0) line += " · " + (growth.level + 1) + " 级";
+        if (growth != null && growth.level > 0) line += " · " + growth.DisplayLevel + " 级";
 
         if (bug.IsHidden) line += " · 躲在地洞里";
         else if (bug.IsDragging) line += " · 搬运中（变慢）";
@@ -151,7 +152,14 @@ public class SimpleHUD : MonoBehaviour
         else hint = "[F] 附近没有可搬物品";
 
         if (eat != null && eat.FindTarget() != null) hint += " · [空格] 进食";
-        else hint += " · [空格] 没东西可吃";
+        else
+        {
+            // 附近有东西但等级不够：直接告诉玩家要长到几级
+            Edible locked = eat != null ? eat.FindLockedTarget() : null;
+            hint += locked != null
+                ? " · [空格] 长到 " + locked.requiredLevel + " 级才吃得下这个"
+                : " · [空格] 没东西可吃";
+        }
 
         return hint;
     }

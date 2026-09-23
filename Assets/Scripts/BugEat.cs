@@ -60,8 +60,35 @@ public class BugEat : MonoBehaviour
         return true;
     }
 
-    /// <summary>当前头前方可吃到的食物（供 HUD / 提示使用）。</summary>
+    /// <summary>当前头前方可吃到的食物（供 HUD / 提示使用）。等级不够的东西不算。</summary>
     public Edible FindTarget()
+    {
+        return FindNearest(true);
+    }
+
+    /// <summary>
+    /// 头前方最近的、但**等级还不够**吃的东西（HUD 用来提示「长到几级才吃得下」）；
+    /// 够级或附近没东西时返回 null。
+    /// </summary>
+    public Edible FindLockedTarget()
+    {
+        Edible near = FindNearest(false);
+        return near != null && !CanEat(near) ? near : null;
+    }
+
+    /// <summary>小虫当前的「等级」（玩家看到的等级口径）。</summary>
+    public int BugLevel { get { return growth != null ? growth.DisplayLevel : 1; } }
+
+    /// <summary>
+    /// 等级够不够吃它：物品和 npc 都挂了 <see cref="Edible.requiredLevel"/>，
+    /// 没长到那个等级就啃不动（果子嫩叶是 1 级，一开始就能吃）。
+    /// </summary>
+    public bool CanEat(Edible food)
+    {
+        return food != null && food.CanBeEatenBy(BugLevel);
+    }
+
+    Edible FindNearest(bool respectLevel)
     {
         Vector2 origin = mouth != null ? (Vector2)mouth.position : (Vector2)transform.position;
         Vector2 forward = bug != null ? bug.Facing : Vector2.right;
@@ -73,6 +100,7 @@ public class BugEat : MonoBehaviour
         {
             Edible food = Edible.All[i];
             if (food == null || food.IsConsumed) continue;
+            if (respectLevel && !CanEat(food)) continue;
 
             Vector2 delta = (Vector2)food.transform.position - origin;
             float distance = delta.magnitude;
@@ -104,7 +132,11 @@ public class BugEat : MonoBehaviour
 
         // 特殊食物：长大一级（更大、更快、吃得更远、体力上限更高）
         if (food.growth > 0 && growth != null && growth.Grow(food.growth))
-            Debug.Log("[Bug] 长大到 " + (growth.level + 1) + " 级（体型 ×" + growth.SizeMultiplier.ToString("F2") + "）");
+            Debug.Log("[Bug] 长大到 " + growth.DisplayLevel + " 级（体型 ×" + growth.SizeMultiplier.ToString("F2") + "）");
+
+        // 吃掉的是村民：看见这一幕的村民从此会躲着小虫
+        Villager victim = food.GetComponent<Villager>();
+        if (victim != null) Villager.ReportEaten(victim);
 
         food.Consume(mouth);
     }

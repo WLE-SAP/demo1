@@ -15,6 +15,8 @@ public class EncounterWindow : MonoBehaviour
 
     [Header("引用")]
     public BugController bug;
+    [Tooltip("用来把「长到几级才吃得下村民」写进介绍（留空自动找）")]
+    public BugGrowth growth;
 
     [Header("遇到判定")]
     [Tooltip("离得多近算「遇到」")]
@@ -36,6 +38,7 @@ public class EncounterWindow : MonoBehaviour
     void Awake()
     {
         if (bug == null) bug = FindObjectOfType<BugController>();
+        if (growth == null) growth = FindObjectOfType<BugGrowth>();
         if (group != null) group.alpha = 0f;
     }
 
@@ -81,7 +84,8 @@ public class EncounterWindow : MonoBehaviour
 
             bestDistance = distance;
             bestTitle = villager.displayName + " · " + villager.JobLabel;
-            bestBody = VillagerJobs.Intro(villager.job) + "\n现在：" + villager.ActivityText;
+            bestBody = VillagerJobs.Intro(villager.job) + "\n现在：" + villager.ActivityText
+                + VillagerEatHint(villager);
         }
 
         // 物品 / 设施：用一次圆形检测拿到所有碰撞体，再看它（或父物体）上有没有介绍
@@ -125,7 +129,6 @@ public class EncounterWindow : MonoBehaviour
             if (hideTimer <= 0f) hideTimer = Mathf.Max(0.05f, hideDelay);
             return;
         }
-
         hideTimer = 0f;
         targetAlpha = 1f;
 
@@ -134,5 +137,22 @@ public class EncounterWindow : MonoBehaviour
         lastBody = bestBody;
         if (title != null) title.text = bestTitle;
         if (body != null) body.text = bestBody;
+    }
+
+    /// <summary>
+    /// 村民也是能吃的（<see cref="Edible.requiredLevel"/>）：在介绍后面补一句「长到几级才啃得动」。
+    /// 等级是 <see cref="BugGrowth.DisplayLevel"/> 的口径（1 = 还没长大）。
+    /// </summary>
+    string VillagerEatHint(Villager villager)
+    {
+        Edible edible = villager.GetComponent<Edible>();
+        if (edible == null || edible.requiredLevel <= 1) return "";
+
+        if (growth == null) growth = FindObjectOfType<BugGrowth>();
+        int level = growth != null ? growth.DisplayLevel : 1;
+
+        return level >= edible.requiredLevel
+            ? "\n（小虫 " + edible.requiredLevel + " 级了，按空格就能把它吃掉）"
+            : "\n（小虫长到 " + edible.requiredLevel + " 级才吃得下它）";
     }
 }

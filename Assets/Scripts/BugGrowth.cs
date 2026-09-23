@@ -7,6 +7,14 @@ using UnityEngine;
 /// </summary>
 public class BugGrowth : MonoBehaviour
 {
+    /// <summary>
+    /// 「长大到几级才吃得下」的门槛，用的是玩家看到的等级口径（见 <see cref="DisplayLevel"/>）：
+    /// 木箱 2 级、树 3 级、村民 4 级（也就是满级）。果子、嫩叶和神奇果实不受限制。
+    /// </summary>
+    public const int CrateLevel = 2;
+    public const int TreeLevel = 3;
+    public const int VillagerLevel = 4;
+
     [Header("等级")]
     public int level;
     public int maxLevel = 3;
@@ -24,6 +32,8 @@ public class BugGrowth : MonoBehaviour
     public bool CanGrow { get { return level < maxLevel; } }
     /// <summary>体型倍率（1 = 原始）。</summary>
     public float SizeMultiplier { get { return 1f + level * scalePerLevel; } }
+    /// <summary>玩家看到的等级：1 = 还没长大（内部 level = 0），每长大一次 +1。</summary>
+    public int DisplayLevel { get { return level + 1; } }
 
     BugController bug;
     WormBody worm;

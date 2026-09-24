@@ -412,6 +412,7 @@ GameObject:
   m_Component:
   - component: {fileID: 680802250}
   - component: {fileID: 680802251}
+  - component: {fileID: 680802252}
   m_Layer: 0
   m_HasEditorInfo: 1
   m_Name: MoveMarker
@@ -491,6 +492,20 @@ SpriteRenderer:
   m_WasSpriteAssigned: 1
   m_MaskInteraction: 0
   m_SpriteSortPoint: 0
+--- !u!114 &680802252
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 680802249}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1b146c74223579b4f8d685f27ffe1490, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  key: crosshair
+  includeChildren: 0
 --- !u!1 &729792896
 GameObject:
   m_ObjectHideFlags: 0
@@ -935,6 +950,7 @@ MonoBehaviour:
   worldSeed: 20260922
   randomSeedEachRun: 1
   streamInterval: 0.25
+  mapKind: 1
   freezeFarVillagers: 1
   freezeRadius: 26
   freezeCheckInterval: 0.5
@@ -1576,6 +1592,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1440651825}
   - component: {fileID: 1440651826}
+  - component: {fileID: 1440651827}
   m_Layer: 0
   m_HasEditorInfo: 1
   m_Name: Head
@@ -1656,6 +1673,20 @@ SpriteRenderer:
   m_WasSpriteAssigned: 1
   m_MaskInteraction: 0
   m_SpriteSortPoint: 0
+--- !u!114 &1440651827
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1440651824}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1b146c74223579b4f8d685f27ffe1490, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  key: bug_head
+  includeChildren: 0
 --- !u!1 &1543675993
 GameObject:
   m_ObjectHideFlags: 0
@@ -1667,6 +1698,7 @@ GameObject:
   - component: {fileID: 1543675994}
   - component: {fileID: 1543675995}
   - component: {fileID: 1543675996}
+  - component: {fileID: 1543675997}
   m_Layer: 0
   m_HasEditorInfo: 1
   m_Name: Ground
@@ -1761,6 +1793,20 @@ MonoBehaviour:
   target: {fileID: 1683799118}
   tileSize: 4
   moveThreshold: 0.001
+--- !u!114 &1543675997
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1543675993}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1b146c74223579b4f8d685f27ffe1490, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  key: ground
+  includeChildren: 0
 --- !u!1 &1564745950
 GameObject:
   m_ObjectHideFlags: 0
@@ -2347,6 +2393,7 @@ MonoBehaviour:
   title: {fileID: 729792899}
   body: {fileID: 1564745951}
   bug: {fileID: 1683799119}
+  growth: {fileID: 0}
   radius: 1.8
   scanInterval: 0.15
   hideDelay: 1.2

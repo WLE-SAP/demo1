@@ -110,7 +110,16 @@ public class BugController : MonoBehaviour
     /// <summary>躲进去的那个地洞。</summary>
     public Burrow CurrentBurrow { get { return hiddenBurrow; } }
     /// <summary>身边有没有可以钻的地洞（HUD 提示用）。</summary>
-    public Burrow NearbyBurrow { get { return hidden ? hiddenBurrow : Burrow.Nearest(rb.position, burrowRange); } }
+    public Burrow NearbyBurrow
+    {
+        get
+        {
+            if (hidden) return hiddenBurrow;
+            // 组件 Awake 顺序不保证：HUD 可能比小虫先跑，这时 rb 还没赋值，用 transform 顶上
+            Vector2 self = rb != null ? rb.position : (Vector2)transform.position;
+            return Burrow.Nearest(self, burrowRange);
+        }
+    }
 
     void Awake()
     {

@@ -74,10 +74,10 @@ public static class MapProfiles
                 g.hamletChance = 0.15f;          // 大部分区块是野外
                 g.houseMin = 0; g.houseMax = 1;  // 偶尔一栋孤屋
                 g.treeMin = 12; g.treeMax = 18;  // 树多
-                g.foodMin = 7; g.foodMax = 11;   // 吃的多（没人打理，反而野生食物多）
-                g.crateMax = 1;
+                g.foodSlotsMin = 7; g.foodSlotsMax = 11;   // 吃的多（没人打理，反而野生食物多）
+                g.itemSlotsMin = 0; g.itemSlotsMax = 1;
                 g.villagerMin = 0; g.villagerMax = 1;
-                g.specialFoodChance = 0.5f;
+                FoodCatalog.SetChance(FoodIds.SpecialFood, 0.5f);
                 g.buildFacilities = false;       // 荒野没有农田摊位
                 break;
 
@@ -85,10 +85,10 @@ public static class MapProfiles
                 g.hamletChance = 1f;             // 每个区块都是「城区」
                 g.houseMin = 6; g.houseMax = 9;  // 房子密
                 g.treeMin = 3; g.treeMax = 7;    // 城里没多少树
-                g.foodMin = 8; g.foodMax = 12;
-                g.crateMax = 3;
+                g.foodSlotsMin = 8; g.foodSlotsMax = 12;
+                g.itemSlotsMin = 0; g.itemSlotsMax = 3;
                 g.villagerMin = 6; g.villagerMax = 9;   // npc 数量很大
-                g.specialFoodChance = 0.5f;
+                FoodCatalog.SetChance(FoodIds.SpecialFood, 0.5f);
                 g.buildFacilities = true;
                 g.farmChance = 0.45f;
                 g.penChance = 0.20f;
@@ -103,10 +103,10 @@ public static class MapProfiles
                 g.hamletChance = 0.65f;
                 g.houseMin = 3; g.houseMax = 5;
                 g.treeMin = 10; g.treeMax = 16;
-                g.foodMin = 5; g.foodMax = 8;
-                g.crateMax = 2;
+                g.foodSlotsMin = 5; g.foodSlotsMax = 8;
+                g.itemSlotsMin = 0; g.itemSlotsMax = 2;
                 g.villagerMin = 2; g.villagerMax = 4;
-                g.specialFoodChance = 0.45f;
+                FoodCatalog.SetChance(FoodIds.SpecialFood, 0.45f);
                 g.buildFacilities = true;
                 g.farmChance = 0.7f;
                 g.penChance = 0.35f;

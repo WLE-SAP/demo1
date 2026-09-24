@@ -5,12 +5,15 @@ using UnityEngine.UI;
 /// <summary>
 /// 屏幕左上角的 HUD —— **只放小虫自己的信息和操作指引**，不放世界 / 村民的调试信息。
 /// <list type="bullet">
-/// <item>常驻操作说明；</item>
-/// <item>小虫状态行：已吃数量、体力、移动速度、成长等级、当前状态（搬运中 / 躲在地洞）；</item>
-/// <item>随场合变化的操作提示（F / 空格 / Shift）与自动存档提示；</item>
-/// <item>体力条（不吃东西会一直掉，掉光就饿死）。</item>
+/// <item>左上角：常驻操作说明 + 小虫状态行（已吃数量、体力、移动速度、成长等级、当前状态）；</item>
+/// <item>屏幕正下方：体力条（不吃东西会一直掉，掉光就饿死）—— **等级越高、条越长**，代表体力上限变大；</item>
+/// <item>右下角：靠近东西时的悬浮窗（<see cref="EncounterWindow"/>）。</item>
 /// </list>
-/// 面板位置在 <see cref="Awake"/> 里按前一块的实际高度往下排，避免两块 HUD 叠在一起互相遮挡。
+/// 版式的两条规矩（<see cref="LayoutPanels"/> 负责，都是运行时算的，改文案不会顶出面板）：
+/// <list type="number">
+/// <item>左上角两块面板的**高度永远等于自己文字的高度 + 边距**，再按实际高度依次往下排，所以不会互相压住；</item>
+/// <item>体力条锚在屏幕底边居中，两侧留空，不占游戏画面也不和右下角悬浮窗打架。</item>
+/// </list>
 /// </summary>
 public class SimpleHUD : MonoBehaviour
 {
@@ -25,11 +28,20 @@ public class SimpleHUD : MonoBehaviour
     public RectTransform statusPanel;
     [Tooltip("两块面板之间的间距")]
     public float panelGap = 10f;
+    [Tooltip("操作说明面板比文字多留的高度（上下各一半）")]
+    public float helpPadding = 28f;
+    [Tooltip("状态面板比文字多留的高度（上下各一半）")]
+    public float statusPadding = 20f;
 
-    [Header("体力条")]
+    [Header("体力条（屏幕正下方居中）")]
     public RectTransform staminaBar;
     public Image staminaFill;
+    [Tooltip("体力条初始长度（还没长大时），画布单位")]
     public float staminaBarWidth = 460f;
+    [Tooltip("每长大一级，体力条加长多少 —— 等级越高血条越长")]
+    public float staminaWidthPerLevel = 110f;
+    [Tooltip("体力条离屏幕底边的距离")]
+    public float staminaBottomMargin = 40f;
 
     [Header("引用")]
     public BugController bug;
@@ -57,6 +69,13 @@ public class SimpleHUD : MonoBehaviour
     float nextRefresh;
     string lastStatus;
 
+    // 体力条的原始尺寸（场景里定的），运行时只改宽度的「初始值」与「每级增量」
+    float barHeight = 26f;
+    float fillInset;
+    float fillHeight = 18f;
+    int lastBarLevel = -1;
+    float lastStatusTextHeight = -1f;
+
     void Awake()
     {
         if (bug == null) bug = FindObjectOfType<BugController>();
@@ -68,21 +87,63 @@ public class SimpleHUD : MonoBehaviour
         if (instructions != null) instructions.text = InstructionsText;
         if (status == null) Debug.LogWarning("[SimpleHUD] 没有指定状态文本，小虫状态不会显示。");
 
+        // 记住场景里给体力条与 Fill 设的尺寸：运行时只改宽度，高度与内缩保持不变
+        if (staminaBar != null)
+        {
+            barHeight = staminaBar.sizeDelta.y;
+            if (staminaFill != null)
+            {
+                fillInset = Mathf.Max(0f, (staminaBar.sizeDelta.x - staminaFill.rectTransform.sizeDelta.x) * 0.5f);
+                fillHeight = staminaFill.rectTransform.sizeDelta.y;
+            }
+        }
+
+        // 先给状态行一个初值，第一帧的面板高度才是对的
+        if (status != null) status.text = BuildStatus();
         LayoutPanels();
+        UpdateStaminaBar();
     }
 
-    /// <summary>把状态面板和体力条依次排到操作说明下面，避免互相遮挡。</summary>
+    /// <summary>
+    /// 排布 HUD：左上角两块面板按**各自文字的实际高度**依次往下排（不会互相压住），
+    /// 体力条钉在屏幕底边居中。
+    /// </summary>
     void LayoutPanels()
     {
-        if (helpPanel == null || statusPanel == null) return;
+        float helpHeight = FitPanel(helpPanel, instructions, helpPadding);
+        float statusHeight = FitPanel(statusPanel, status, statusPadding);
 
-        Vector2 helpPosition = helpPanel.anchoredPosition;
-        float helpHeight = helpPanel.sizeDelta.y;
-
-        statusPanel.anchoredPosition = new Vector2(helpPosition.x, helpPosition.y - helpHeight - panelGap);
+        if (helpPanel != null && statusPanel != null)
+        {
+            Vector2 helpPosition = helpPanel.anchoredPosition;
+            statusPanel.anchoredPosition = new Vector2(helpPosition.x, helpPosition.y - helpHeight - panelGap);
+        }
 
         if (staminaBar != null)
-            staminaBar.anchoredPosition = new Vector2(helpPosition.x, statusPanel.anchoredPosition.y - statusPanel.sizeDelta.y - panelGap);
+        {
+            staminaBar.anchorMin = new Vector2(0.5f, 0f);
+            staminaBar.anchorMax = new Vector2(0.5f, 0f);
+            staminaBar.pivot = new Vector2(0.5f, 0f);
+            staminaBar.anchoredPosition = new Vector2(0f, staminaBottomMargin);
+        }
+
+        lastStatusTextHeight = status != null ? status.preferredHeight : 0f;
+        ApplyBarWidth();
+    }
+
+    /// <summary>把面板高度收到「刚好包住文字 + 上下边距」，返回最终高度。</summary>
+    float FitPanel(RectTransform panel, TMP_Text text, float padding)
+    {
+        if (panel == null) return 0f;
+
+        float height = panel.sizeDelta.y;
+        if (text != null)
+        {
+            text.ForceMeshUpdate();
+            height = Mathf.Max(1f, text.preferredHeight + padding);
+        }
+        panel.sizeDelta = new Vector2(panel.sizeDelta.x, height);
+        return height;
     }
 
     void Update()
@@ -97,20 +158,48 @@ public class SimpleHUD : MonoBehaviour
         if (text == lastStatus) return;   // 文本没变就不重建 TMP 网格
         lastStatus = text;
         status.text = text;
+
+        // 提示文字换行 / 变长时重新量一次，面板永远包得住文字、也不会压到下面的东西
+        status.ForceMeshUpdate();
+        if (Mathf.Abs(status.preferredHeight - lastStatusTextHeight) > 0.5f) LayoutPanels();
+    }
+
+    /// <summary>当前体力条该有多长：等级越高越长（长大 = 体力上限更高）。</summary>
+    float BarWidth
+    {
+        get { return staminaBarWidth + Mathf.Max(0, CurrentLevel) * staminaWidthPerLevel; }
+    }
+
+    int CurrentLevel
+    {
+        get { return growth != null ? growth.level : 0; }
     }
 
     void UpdateStaminaBar()
     {
+        ApplyBarWidth();
         if (staminaFill == null) return;
 
         float ratio = vitality != null ? vitality.Ratio : 1f;
         Vector2 size = staminaFill.rectTransform.sizeDelta;
-        size.x = Mathf.Max(0f, staminaBarWidth * ratio);
+        size.x = Mathf.Max(0f, (BarWidth - fillInset * 2f) * ratio);
         staminaFill.rectTransform.sizeDelta = size;
 
         if (ratio > 0.6f) staminaFill.color = new Color(0.45f, 0.80f, 0.40f);
         else if (ratio > 0.3f) staminaFill.color = new Color(0.92f, 0.78f, 0.30f);
         else staminaFill.color = new Color(0.88f, 0.32f, 0.28f);
+    }
+
+    /// <summary>等级变了才改长度，避免每帧改 RectTransform 触发重排。</summary>
+    void ApplyBarWidth()
+    {
+        if (staminaBar == null) return;
+
+        int level = CurrentLevel;
+        if (level == lastBarLevel) return;
+
+        lastBarLevel = level;
+        staminaBar.sizeDelta = new Vector2(BarWidth, barHeight);
     }
 
     string BuildStatus()

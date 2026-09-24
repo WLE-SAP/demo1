@@ -5,10 +5,11 @@ using UnityEngine;
 
 /// <summary>
 /// 导入后处理：放进 <c>Assets/Resources/ArtOverride/</c> 的图片会被自动配置成 Sprite，
-/// 并按“被替换素材在世界里的宽度”反推 Pixels Per Unit。
+/// 并按「这个 key 对应的原素材在世界里的宽度」反推 Pixels Per Unit。
 ///
 /// 这样不管放进去的图片是 64px 还是 1024px，替换后占的位置都和原素材一致，不需要手改导入设置。
-/// 找不到对应素材（名字没对上）时退回项目通用值：64px = 1 世界单位。
+/// 九宫格 key（屋顶 / 木箱 / 面板…）还会把边框按原素材的比例自动放大到新图片上，
+/// 四角因此不会跟着被拉伸。名字没对上 key 的图片退回通用值：64px = 1 世界单位。
 /// 已经配置过的图片（meta 里带标记）不再改动，方便手动微调。
 /// </summary>
 public class ArtOverridePostprocessor : AssetPostprocessor
@@ -17,7 +18,13 @@ public class ArtOverridePostprocessor : AssetPostprocessor
     const string ConfiguredTag = "artoverride";
     const float FallbackPixelsPerUnit = 64f;
 
-    static Dictionary<string, float> originalWidths;
+    struct SpriteInfo
+    {
+        public float worldWidth;
+        public float borderRatio;
+    }
+
+    static Dictionary<string, SpriteInfo> originals;
 
     void OnPreprocessTexture()
     {
@@ -32,7 +39,13 @@ public class ArtOverridePostprocessor : AssetPostprocessor
         importer.GetSourceTextureWidthAndHeight(out width, out height);
         if (width <= 0) return;
 
-        float worldWidth = OriginalWorldWidth(path);
+        string key = ArtOverride.ResolveKey(path);
+        ArtOverride.Slot slot = default;
+        bool known = key != null && ArtOverride.Slots.TryGetValue(key, out slot);
+
+        SpriteInfo info = default;
+        bool hasInfo = known && TryGetOriginal(slot.source, out info);
+        float worldWidth = hasInfo ? info.worldWidth : 0f;
         float ppu = worldWidth > 0.0001f ? width / worldWidth : FallbackPixelsPerUnit;
 
         TextureImporterSettings settings = new TextureImporterSettings();
@@ -45,35 +58,46 @@ public class ArtOverridePostprocessor : AssetPostprocessor
         settings.alphaIsTransparency = true;
         settings.mipmapEnabled = false;
         settings.wrapMode = TextureWrapMode.Clamp;
+
+        // 九宫格 key：把原素材的圆角/边框比例搬到新图片上，四角才不会被拉伸
+        if (known && slot.sliced && hasInfo && info.borderRatio > 0.0001f)
+        {
+            int side = Mathf.Min(width, height);
+            int border = Mathf.Clamp(Mathf.RoundToInt(side * info.borderRatio), 1, Mathf.Max(1, side / 2));
+            settings.spriteBorder = new Vector4(border, border, border, border);
+        }
+
         importer.SetTextureSettings(settings);
         importer.userData = ConfiguredTag;
 
-        Debug.Log("[ArtOverride] " + Path.GetFileName(path) + " 按 Sprite 导入，Pixels Per Unit = " + ppu.ToString("0.##")
+        Debug.Log("[ArtOverride] " + Path.GetFileName(path) + " → key " + (known ? key : "（没对上）")
+            + "，按 Sprite 导入，Pixels Per Unit = " + ppu.ToString("0.##")
             + (worldWidth > 0.0001f
                 ? "（与原素材等宽：" + worldWidth.ToString("0.##") + " 世界单位）"
-                : "（没有匹配到素材，使用通用值）"));
+                : "（没有匹配到 key，使用通用值）"));
     }
 
-    /// <summary>被替换素材在世界里的宽度（世界单位）。找不到返回 0。</summary>
-    static float OriginalWorldWidth(string overridePath)
+    /// <summary>取原素材的「世界宽度」与「边框比例」；找不到返回 false。</summary>
+    static bool TryGetOriginal(string spriteName, out SpriteInfo info)
     {
+        info = new SpriteInfo();
+        if (string.IsNullOrEmpty(spriteName)) return false;
+
         try
         {
-            if (originalWidths == null) BuildOriginalWidths();
-            float value;
-            if (originalWidths.TryGetValue(ArtOverride.ResolveSpriteKey(Path.GetFileName(overridePath)), out value))
-                return value;
+            if (originals == null) BuildOriginals();
+            return originals.TryGetValue(ArtOverride.NormalizeName(spriteName), out info);
         }
         catch (System.Exception e)
         {
             Debug.LogWarning("[ArtOverride] 读取原素材尺寸失败：" + e.Message);
+            return false;
         }
-        return 0f;
     }
 
-    static void BuildOriginalWidths()
+    static void BuildOriginals()
     {
-        originalWidths = new Dictionary<string, float>();
+        originals = new Dictionary<string, SpriteInfo>();
         string[] guids = AssetDatabase.FindAssets("t:Sprite");
         for (int i = 0; i < guids.Length; i++)
         {
@@ -83,8 +107,13 @@ public class ArtOverridePostprocessor : AssetPostprocessor
             if (sprite == null) continue;
 
             string key = ArtOverride.NormalizeName(sprite.name);
-            if (key.Length == 0 || originalWidths.ContainsKey(key)) continue;
-            originalWidths[key] = sprite.bounds.size.x;
+            if (key.Length == 0 || originals.ContainsKey(key)) continue;
+
+            SpriteInfo info = new SpriteInfo();
+            info.worldWidth = sprite.bounds.size.x;
+            Texture2D texture = sprite.texture;
+            info.borderRatio = texture != null && texture.width > 0 ? sprite.border.x / texture.width : 0f;
+            originals[key] = info;
         }
     }
 }

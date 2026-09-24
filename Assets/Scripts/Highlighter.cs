@@ -3,12 +3,12 @@ using UnityEngine;
 /// <summary>
 /// 物品高亮：0 = 普通，1 = 头部靠近，2 = 当前目标 / 搬运中。
 /// 做法是在物品背后加一圈发光底衬，不改动物品本身的颜色，任何底色都看得清。
-/// 运行时用 <see cref="Setup"/> 传入底衬精灵（AddComponent 会立刻执行 Awake，
+/// 运行时用 <see cref="Setup"/> 传入美术 key 与程序化底衬（AddComponent 会立刻执行 Awake，
 /// 所以不能先 AddComponent 再赋字段）。
 /// </summary>
 public class Highlighter : MonoBehaviour
 {
-    [Tooltip("发光底衬用的精灵（圆形或圆角矩形）")]
+    [Tooltip("发光底衬用的精灵（圆形或圆角矩形）；运行时由 Setup 按美术 key 决定")]
     public Sprite glowSprite;
 
     [Header("高亮颜色")]
@@ -37,10 +37,10 @@ public class Highlighter : MonoBehaviour
         Apply();
     }
 
-    /// <summary>运行时创建：设置底衬精灵并立即生成底衬。</summary>
-    public void Setup(Sprite sprite)
+    /// <summary>运行时创建：按美术 key 选底衬（放了图片用图片，否则用程序化精灵）并立即生成底衬。</summary>
+    public void Setup(string artKey, Sprite fallbackSprite)
     {
-        glowSprite = sprite;
+        glowSprite = ArtOverride.Or(artKey, fallbackSprite);
         BuildGlow();
         Apply();
     }

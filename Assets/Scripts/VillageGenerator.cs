@@ -38,9 +38,14 @@ public class VillageGenerator : MonoBehaviour
     public int houseMax = 5;
     public int treeMin = 10;
     public int treeMax = 16;
-    public int foodMin = 5;
-    public int foodMax = 8;
-    public int crateMax = 2;
+
+    [Tooltip("每个区块的「食物位」数量：每个位按权重从 FoodCatalog 里抽一种（见 Assets/Scripts/FoodCatalog.cs）")]
+    public int foodSlotsMin = 5;
+    public int foodSlotsMax = 8;
+    [Tooltip("每个区块的「可交互物品位」数量（木箱之类，按权重从 ItemCatalog 里抽）")]
+    public int itemSlotsMin = 0;
+    public int itemSlotsMax = 2;
+
     public int villagerMin = 2;
     public int villagerMax = 4;
 
@@ -50,10 +55,6 @@ public class VillageGenerator : MonoBehaviour
     public int burrowMax = 2;
     [Tooltip("其中是「地道」（可两两传送到另一头）的比例")]
     [Range(0f, 1f)] public float tunnelChance = 0.45f;
-
-    [Header("特殊食物")]
-    [Tooltip("每个区块出现「神奇果实」的概率（吃下去小虫会长大）")]
-    [Range(0f, 1f)] public float specialFoodChance = 0.45f;
 
     [Header("设施概率（村庄区块）")]
     public bool buildFacilities = true;
@@ -144,6 +145,12 @@ public class VillageGenerator : MonoBehaviour
     void Awake()
     {
         if (map == null) map = FindObjectOfType<VillageMap>();
+
+        // 新增内容（食物 / 可交互物品）用到的程序化形状与内容目录都要先准备好，
+        // 之后每个区块生成时直接按目录刷（见 FoodCatalog / ItemCatalog）
+        ArtShapes.Use(discSprite, rectSprite, roundRectSprite, berrySprite, leafSprite);
+        FoodCatalog.EnsureDefaults();
+        ItemCatalog.EnsureDefaults();
     }
 
     void Start()
@@ -184,11 +191,10 @@ public class VillageGenerator : MonoBehaviour
         {
             BuildWell();
             if (buildFacilities) BuildFacilities();
-            BuildCrates();
         }
         BuildHouses();
-        BuildFood();
-        BuildSpecialFood();
+        BuildFoods(hamlet);      // 食物位 + 固定生成的食物（内容来自 FoodCatalog）
+        BuildItems(hamlet);      // 可交互物品位 + 固定生成的物品（内容来自 ItemCatalog）
         BuildBurrows();
         BuildVillagers();
         BuildTrees();
@@ -241,7 +247,7 @@ public class VillageGenerator : MonoBehaviour
     /// <summary>俯视 2D 深度排序：越靠下（Y 越小）画得越靠前。世界无限大，所以用绝对 Y。</summary>
     static int YOrder(float y)
     {
-        return 1000 - Mathf.RoundToInt(y * 10f);
+        return SpawnKit.YOrder(y);   // 公式只写在 SpawnKit 一处，新增内容也用它
     }
 
     bool IsFree(Rect area, float padding)
@@ -312,7 +318,11 @@ public class VillageGenerator : MonoBehaviour
         sr.sortingLayerID = GroundLayerId;
     }
 
-    SpriteRenderer AddSlice(Transform parent, string name, Sprite sprite, Vector2 size, Vector2 localPos, Color color, int order, bool groundLayer = false)
+    /// <summary>
+    /// 九宫格图形（按 size 拉伸，四角不变形）。<paramref name="key"/> 是这个物件的「一物一图」美术 key，
+    /// 玩家在 Resources/ArtOverride 里放了同名图片就换成图片（见 <see cref="ArtOverride"/>）。
+    /// </summary>
+    SpriteRenderer AddSlice(Transform parent, string name, Sprite sprite, Vector2 size, Vector2 localPos, Color color, int order, bool groundLayer = false, string key = null)
     {
         GameObject go = new GameObject(name);
         go.transform.SetParent(parent, false);
@@ -324,11 +334,12 @@ public class VillageGenerator : MonoBehaviour
         sr.color = color;
         sr.sortingOrder = order;
         if (groundLayer) ApplyGroundLayer(sr);
+        if (key != null) ArtOverride.Apply(sr, key);
         return sr;
     }
 
     /// <summary>纯色长方形：直接缩放 1x1 的矩形贴图，不做九宫格，尺寸多小都不会变形。</summary>
-    SpriteRenderer AddRect(Transform parent, string name, Vector2 size, Vector2 localPos, Color color, int order, bool groundLayer = false)
+    SpriteRenderer AddRect(Transform parent, string name, Vector2 size, Vector2 localPos, Color color, int order, bool groundLayer = false, string key = null)
     {
         GameObject go = new GameObject(name);
         go.transform.SetParent(parent, false);
@@ -339,10 +350,11 @@ public class VillageGenerator : MonoBehaviour
         sr.color = color;
         sr.sortingOrder = order;
         if (groundLayer) ApplyGroundLayer(sr);
+        if (key != null) ArtOverride.Apply(sr, key);
         return sr;
     }
 
-    SpriteRenderer AddDisc(Transform parent, string name, float size, Vector2 localPos, Color color, int order, bool groundLayer = false)
+    SpriteRenderer AddDisc(Transform parent, string name, float size, Vector2 localPos, Color color, int order, bool groundLayer = false, string key = null)
     {
         GameObject go = new GameObject(name);
         go.transform.SetParent(parent, false);
@@ -353,6 +365,7 @@ public class VillageGenerator : MonoBehaviour
         sr.color = color;
         sr.sortingOrder = order;
         if (groundLayer) ApplyGroundLayer(sr);
+        if (key != null) ArtOverride.Apply(sr, key);
         return sr;
     }
 
@@ -398,6 +411,7 @@ public class VillageGenerator : MonoBehaviour
         // 道路和草地同在 Ground 层（草地 -900），路比草地高一点才看得见
         ApplyGroundLayer(sr);
         sr.sortingOrder = -885;
+        ArtOverride.Apply(sr, ArtKeys.Road);
     }
 
     // ---------------- 水井 ----------------
@@ -409,9 +423,9 @@ public class VillageGenerator : MonoBehaviour
         go.transform.position = new Vector3(center.x, center.y, 0f);
 
         int order = YOrder(center.y);
-        AddDisc(go.transform, "Rim", 3.0f, Vector2.zero, new Color(0.52f, 0.51f, 0.48f), order);
-        AddDisc(go.transform, "Water", 2.1f, Vector2.zero, new Color(0.14f, 0.24f, 0.34f), order + 1);
-        AddDisc(go.transform, "Post", 0.9f, new Vector2(1.5f, 0.4f), new Color(0.42f, 0.29f, 0.16f), order + 2);
+        AddDisc(go.transform, "Rim", 3.0f, Vector2.zero, new Color(0.52f, 0.51f, 0.48f), order, key: ArtKeys.WellRim);
+        AddDisc(go.transform, "Water", 2.1f, Vector2.zero, new Color(0.14f, 0.24f, 0.34f), order + 1, key: ArtKeys.WellWater);
+        AddDisc(go.transform, "Post", 0.9f, new Vector2(1.5f, 0.4f), new Color(0.42f, 0.29f, 0.16f), order + 2, key: ArtKeys.WellPost);
 
         CircleCollider2D collider = go.AddComponent<CircleCollider2D>();
         collider.radius = 1.5f;
@@ -455,15 +469,15 @@ public class VillageGenerator : MonoBehaviour
 
             // 农田是「平铺在地上的」，放 Ground 层按固定次序排，
             // 这样站在田里的小虫/村民一定画在田上面，不会被整块地遮住
-            AddSlice(go.transform, "Soil", rectSprite, new Vector2(w, h), Vector2.zero, new Color(0.37f, 0.27f, 0.18f), -870, true);
+            AddSlice(go.transform, "Soil", rectSprite, new Vector2(w, h), Vector2.zero, new Color(0.37f, 0.27f, 0.18f), -870, true, ArtKeys.FarmSoil);
 
             int rows = Mathf.Max(3, Mathf.FloorToInt(h / 0.6f));
             for (int r = 0; r < rows; r++)
             {
                 float rowY = -h * 0.5f + 0.45f + r * (h - 0.6f) / Mathf.Max(1, rows - 1);
-                AddRect(go.transform, "Row", new Vector2(w - 0.55f, 0.15f), new Vector2(0f, rowY), new Color(0.30f, 0.21f, 0.13f), -860, true);
+                AddRect(go.transform, "Row", new Vector2(w - 0.55f, 0.15f), new Vector2(0f, rowY), new Color(0.30f, 0.21f, 0.13f), -860, true, ArtKeys.FarmRow);
                 for (int k = 0; k < 3; k++)
-                    AddDisc(go.transform, "Sprout", 0.2f, new Vector2(-w * 0.3f + k * w * 0.3f, rowY + 0.07f), new Color(0.42f, 0.62f, 0.28f), -850, true);
+                    AddDisc(go.transform, "Sprout", 0.2f, new Vector2(-w * 0.3f + k * w * 0.3f, rowY + 0.07f), new Color(0.42f, 0.62f, 0.28f), -850, true, ArtKeys.FarmSprout);
             }
 
             if (map != null) map.farms.Add(c);
@@ -491,18 +505,18 @@ public class VillageGenerator : MonoBehaviour
             int order = YOrder(c.y) - 4;
             Color fence = new Color(0.52f, 0.40f, 0.26f);
             // 牧场草地也是平铺在地上的 → Ground 层，不会挡住里面的羊和牧羊人
-            AddSlice(go.transform, "Grass", rectSprite, new Vector2(w, h), Vector2.zero, new Color(0.38f, 0.48f, 0.26f), -845, true);
-            AddRect(go.transform, "FenceN", new Vector2(w, 0.2f), new Vector2(0f, h * 0.5f), fence, YOrder(c.y + h * 0.5f) + 1);
-            AddRect(go.transform, "FenceW", new Vector2(0.2f, h), new Vector2(-w * 0.5f, 0f), fence, order + 1);
-            AddRect(go.transform, "FenceE", new Vector2(0.2f, h), new Vector2(w * 0.5f, 0f), fence, order + 1);
+            AddSlice(go.transform, "Grass", rectSprite, new Vector2(w, h), Vector2.zero, new Color(0.38f, 0.48f, 0.26f), -845, true, ArtKeys.PenGrass);
+            AddRect(go.transform, "FenceN", new Vector2(w, 0.2f), new Vector2(0f, h * 0.5f), fence, YOrder(c.y + h * 0.5f) + 1, key: ArtKeys.Fence);
+            AddRect(go.transform, "FenceW", new Vector2(0.2f, h), new Vector2(-w * 0.5f, 0f), fence, order + 1, key: ArtKeys.Fence);
+            AddRect(go.transform, "FenceE", new Vector2(0.2f, h), new Vector2(w * 0.5f, 0f), fence, order + 1, key: ArtKeys.Fence);
 
             for (int i = 0; i < 4; i++)
             {
                 Vector2 p = new Vector2(Rand(-w * 0.32f, w * 0.32f), Rand(-h * 0.32f, h * 0.32f));
                 // 羊各自按自己的 Y 排序，站在羊附近的人才不会被羊挡住
                 int sheepOrder = YOrder(c.y + p.y) + 2;
-                AddDisc(go.transform, "Sheep", 0.52f, p, new Color(0.93f, 0.92f, 0.87f), sheepOrder);
-                AddDisc(go.transform, "SheepHead", 0.24f, p + new Vector2(0.24f, 0.14f), new Color(0.30f, 0.28f, 0.30f), sheepOrder + 1);
+                AddDisc(go.transform, "Sheep", 0.52f, p, new Color(0.93f, 0.92f, 0.87f), sheepOrder, key: ArtKeys.Sheep);
+                AddDisc(go.transform, "SheepHead", 0.24f, p + new Vector2(0.24f, 0.14f), new Color(0.30f, 0.28f, 0.30f), sheepOrder + 1, key: ArtKeys.SheepHead);
             }
 
             if (map != null) map.pens.Add(c);
@@ -527,13 +541,13 @@ public class VillageGenerator : MonoBehaviour
             int order = YOrder(c.y);
             float wallHeight = Mathf.Clamp(area.height * 0.30f, 0.5f, 0.8f);
             float wallY = -area.height * 0.5f + wallHeight * 0.5f;
-            AddRect(go.transform, "Sign", new Vector2(0.95f, 0.42f), new Vector2(0f, wallY + 0.42f), signColor, order + 3);
-            AddRect(go.transform, "Chimney", new Vector2(0.38f, 0.7f), new Vector2(area.width * 0.28f, area.height * 0.5f + 0.2f), chimneyColor, order + 1);
+            AddRect(go.transform, "Sign", new Vector2(0.95f, 0.42f), new Vector2(0f, wallY + 0.42f), signColor, order + 3, key: ArtKeys.ShopSign);
+            AddRect(go.transform, "Chimney", new Vector2(0.38f, 0.7f), new Vector2(area.width * 0.28f, area.height * 0.5f + 0.2f), chimneyColor, order + 1, key: ArtKeys.HouseChimney);
 
             if (forge)
             {
-                AddRect(go.transform, "Anvil", new Vector2(0.5f, 0.32f), new Vector2(-area.width * 0.42f, -area.height * 0.5f - 0.5f), new Color(0.22f, 0.22f, 0.24f), order + 2);
-                SpriteRenderer fire = AddDisc(go.transform, "Forge", 0.55f, new Vector2(-area.width * 0.42f, -area.height * 0.5f - 0.3f), new Color(0.95f, 0.45f, 0.15f), order + 1);
+                AddRect(go.transform, "Anvil", new Vector2(0.5f, 0.32f), new Vector2(-area.width * 0.42f, -area.height * 0.5f - 0.5f), new Color(0.22f, 0.22f, 0.24f), order + 2, key: ArtKeys.Anvil);
+                SpriteRenderer fire = AddDisc(go.transform, "Forge", 0.55f, new Vector2(-area.width * 0.42f, -area.height * 0.5f - 0.3f), new Color(0.95f, 0.45f, 0.15f), order + 1, key: ArtKeys.Forge);
                 NightGlow glow = fire.gameObject.AddComponent<NightGlow>();
                 glow.dayColor = new Color(0.95f, 0.45f, 0.15f, 0.45f);
                 glow.nightColor = new Color(1f, 0.62f, 0.20f, 0.95f);
@@ -569,13 +583,13 @@ public class VillageGenerator : MonoBehaviour
 
             int order = YOrder(c.y);
             Color awning = Pick(StallColors);
-            AddRect(go.transform, "Counter", new Vector2(1.7f, 0.5f), new Vector2(0f, -0.3f), new Color(0.56f, 0.41f, 0.25f), order);
-            AddRect(go.transform, "Awning", new Vector2(1.95f, 0.45f), new Vector2(0f, 0.35f), awning, order + 1);
-            AddRect(go.transform, "PostL", new Vector2(0.12f, 0.9f), new Vector2(-0.92f, 0.05f), new Color(0.45f, 0.33f, 0.20f), order);
-            AddRect(go.transform, "PostR", new Vector2(0.12f, 0.9f), new Vector2(0.92f, 0.05f), new Color(0.45f, 0.33f, 0.20f), order);
-            AddDisc(go.transform, "Goods1", 0.3f, new Vector2(-0.5f, -0.1f), new Color(0.85f, 0.48f, 0.26f), order + 2);
-            AddDisc(go.transform, "Goods2", 0.26f, new Vector2(0f, -0.08f), new Color(0.90f, 0.80f, 0.35f), order + 2);
-            AddDisc(go.transform, "Goods3", 0.28f, new Vector2(0.5f, -0.1f), new Color(0.45f, 0.66f, 0.36f), order + 2);
+            AddRect(go.transform, "Counter", new Vector2(1.7f, 0.5f), new Vector2(0f, -0.3f), new Color(0.56f, 0.41f, 0.25f), order, key: ArtKeys.StallCounter);
+            AddRect(go.transform, "Awning", new Vector2(1.95f, 0.45f), new Vector2(0f, 0.35f), awning, order + 1, key: ArtKeys.StallAwning);
+            AddRect(go.transform, "PostL", new Vector2(0.12f, 0.9f), new Vector2(-0.92f, 0.05f), new Color(0.45f, 0.33f, 0.20f), order, key: ArtKeys.StallPost);
+            AddRect(go.transform, "PostR", new Vector2(0.12f, 0.9f), new Vector2(0.92f, 0.05f), new Color(0.45f, 0.33f, 0.20f), order, key: ArtKeys.StallPost);
+            AddDisc(go.transform, "Goods1", 0.3f, new Vector2(-0.5f, -0.1f), new Color(0.85f, 0.48f, 0.26f), order + 2, key: ArtKeys.StallGoods);
+            AddDisc(go.transform, "Goods2", 0.26f, new Vector2(0f, -0.08f), new Color(0.90f, 0.80f, 0.35f), order + 2, key: ArtKeys.StallGoods);
+            AddDisc(go.transform, "Goods3", 0.28f, new Vector2(0.5f, -0.1f), new Color(0.45f, 0.66f, 0.36f), order + 2, key: ArtKeys.StallGoods);
 
             if (map != null) map.stalls.Add(new Vector2(c.x, c.y - 1.15f));   // 摊主站在柜台前
             return;
@@ -600,11 +614,11 @@ public class VillageGenerator : MonoBehaviour
             go.transform.position = new Vector3(c.x, c.y, 0f);
 
             // 花坛同样是地面上的平铺物件 → Ground 层，村民站在花坛里也看得见
-            AddSlice(go.transform, "Bed", rectSprite, new Vector2(w, h), Vector2.zero, new Color(0.30f, 0.40f, 0.24f), -840, true);
-            AddRect(go.transform, "EdgeN", new Vector2(w, 0.14f), new Vector2(0f, h * 0.5f), new Color(0.62f, 0.58f, 0.50f), -835, true);
-            AddRect(go.transform, "EdgeS", new Vector2(w, 0.14f), new Vector2(0f, -h * 0.5f), new Color(0.62f, 0.58f, 0.50f), -835, true);
+            AddSlice(go.transform, "Bed", rectSprite, new Vector2(w, h), Vector2.zero, new Color(0.30f, 0.40f, 0.24f), -840, true, ArtKeys.GardenBed);
+            AddRect(go.transform, "EdgeN", new Vector2(w, 0.14f), new Vector2(0f, h * 0.5f), new Color(0.62f, 0.58f, 0.50f), -835, true, ArtKeys.GardenEdge);
+            AddRect(go.transform, "EdgeS", new Vector2(w, 0.14f), new Vector2(0f, -h * 0.5f), new Color(0.62f, 0.58f, 0.50f), -835, true, ArtKeys.GardenEdge);
             for (int i = 0; i < 7; i++)
-                AddDisc(go.transform, "Flower", Rand(0.18f, 0.26f), new Vector2(Rand(-w * 0.36f, w * 0.36f), Rand(-h * 0.34f, h * 0.34f)), Pick(FlowerColors), -830, true);
+                AddDisc(go.transform, "Flower", Rand(0.18f, 0.26f), new Vector2(Rand(-w * 0.36f, w * 0.36f), Rand(-h * 0.34f, h * 0.34f)), Pick(FlowerColors), -830, true, ArtKeys.GardenFlower);
 
             if (map != null) map.gardens.Add(c);
             return;
@@ -628,10 +642,10 @@ public class VillageGenerator : MonoBehaviour
             go.transform.position = new Vector3(c.x, c.y, 0f);
 
             int order = YOrder(c.y);
-            AddRect(go.transform, "Post", new Vector2(0.16f, 1.0f), new Vector2(0f, -0.4f), new Color(0.44f, 0.31f, 0.19f), order);
-            AddRect(go.transform, "Board", new Vector2(1.25f, 0.8f), new Vector2(0f, 0.28f), new Color(0.60f, 0.44f, 0.27f), order + 1);
-            AddRect(go.transform, "Paper1", new Vector2(0.32f, 0.4f), new Vector2(-0.3f, 0.3f), new Color(0.93f, 0.92f, 0.86f), order + 2);
-            AddRect(go.transform, "Paper2", new Vector2(0.28f, 0.34f), new Vector2(0.3f, 0.32f), new Color(0.90f, 0.88f, 0.80f), order + 2);
+            AddRect(go.transform, "Post", new Vector2(0.16f, 1.0f), new Vector2(0f, -0.4f), new Color(0.44f, 0.31f, 0.19f), order, key: ArtKeys.BoardPost);
+            AddRect(go.transform, "Board", new Vector2(1.25f, 0.8f), new Vector2(0f, 0.28f), new Color(0.60f, 0.44f, 0.27f), order + 1, key: ArtKeys.Board);
+            AddRect(go.transform, "Paper1", new Vector2(0.32f, 0.4f), new Vector2(-0.3f, 0.3f), new Color(0.93f, 0.92f, 0.86f), order + 2, key: ArtKeys.BoardPaper);
+            AddRect(go.transform, "Paper2", new Vector2(0.28f, 0.34f), new Vector2(0.3f, 0.32f), new Color(0.90f, 0.88f, 0.80f), order + 2, key: ArtKeys.BoardPaper);
 
             if (map != null) { map.board = new Vector2(c.x, c.y - 1.0f); map.hasBoard = true; }
             return;
@@ -655,8 +669,8 @@ public class VillageGenerator : MonoBehaviour
             go.transform.position = new Vector3(c.x, c.y, 0f);
 
             int order = YOrder(c.y);
-            AddRect(go.transform, "Seat", new Vector2(1.5f, 0.34f), new Vector2(0f, 0f), new Color(0.56f, 0.40f, 0.24f), order);
-            AddRect(go.transform, "Back", new Vector2(1.5f, 0.16f), new Vector2(0f, 0.34f), new Color(0.48f, 0.34f, 0.20f), order + 1);
+            AddRect(go.transform, "Seat", new Vector2(1.5f, 0.34f), new Vector2(0f, 0f), new Color(0.56f, 0.40f, 0.24f), order, key: ArtKeys.BenchSeat);
+            AddRect(go.transform, "Back", new Vector2(1.5f, 0.16f), new Vector2(0f, 0.34f), new Color(0.48f, 0.34f, 0.20f), order + 1, key: ArtKeys.BenchBack);
 
             if (map != null) map.benches.Add(new Vector2(c.x, c.y - 0.7f));
             return;
@@ -683,8 +697,8 @@ public class VillageGenerator : MonoBehaviour
         go.transform.position = new Vector3(position.x, position.y, 0f);
 
         int order = YOrder(position.y);
-        AddRect(go.transform, "Post", new Vector2(0.13f, 1.1f), new Vector2(0f, 0.55f), new Color(0.34f, 0.31f, 0.29f), order);
-        AddDisc(go.transform, "Head", 0.34f, new Vector2(0f, 1.16f), new Color(0.92f, 0.88f, 0.62f), order + 1);
+        AddRect(go.transform, "Post", new Vector2(0.13f, 1.1f), new Vector2(0f, 0.55f), new Color(0.34f, 0.31f, 0.29f), order, key: ArtKeys.LampPost);
+        AddDisc(go.transform, "Head", 0.34f, new Vector2(0f, 1.16f), new Color(0.92f, 0.88f, 0.62f), order + 1, key: ArtKeys.LampHead);
 
         GameObject glow = new GameObject("Glow");
         glow.transform.SetParent(go.transform, false);
@@ -733,15 +747,15 @@ public class VillageGenerator : MonoBehaviour
         float wallHeight = Mathf.Clamp(area.height * 0.30f, 0.5f, 0.8f);
         float wallY = -area.height * 0.5f + wallHeight * 0.5f;
 
-        AddSlice(go.transform, "Roof", rectSprite, new Vector2(area.width, area.height), Vector2.zero, Pick(RoofColors), order);
-        AddSlice(go.transform, "Wall", rectSprite, new Vector2(area.width, wallHeight), new Vector2(0f, wallY), new Color(0.88f, 0.84f, 0.73f), order + 1);
-        AddSlice(go.transform, "Door", rectSprite, new Vector2(0.66f, wallHeight * 0.88f), new Vector2(0f, wallY), new Color(0.44f, 0.28f, 0.16f), order + 2);
+        AddSlice(go.transform, "Roof", rectSprite, new Vector2(area.width, area.height), Vector2.zero, Pick(RoofColors), order, key: ArtKeys.HouseRoof);
+        AddSlice(go.transform, "Wall", rectSprite, new Vector2(area.width, wallHeight), new Vector2(0f, wallY), new Color(0.88f, 0.84f, 0.73f), order + 1, key: ArtKeys.HouseWall);
+        AddSlice(go.transform, "Door", rectSprite, new Vector2(0.66f, wallHeight * 0.88f), new Vector2(0f, wallY), new Color(0.44f, 0.28f, 0.16f), order + 2, key: ArtKeys.HouseDoor);
 
         // 窗户白天是反光的玻璃色，夜里透出暖黄的灯光
         Color windowDay = new Color(0.70f, 0.85f, 0.92f);
         Color windowNight = new Color(1f, 0.90f, 0.58f);
-        SpriteRenderer windowL = AddSlice(go.transform, "WindowL", rectSprite, new Vector2(0.52f, wallHeight * 0.44f), new Vector2(-area.width * 0.28f, wallY + wallHeight * 0.12f), windowDay, order + 2);
-        SpriteRenderer windowR = AddSlice(go.transform, "WindowR", rectSprite, new Vector2(0.52f, wallHeight * 0.44f), new Vector2(area.width * 0.28f, wallY + wallHeight * 0.12f), windowDay, order + 2);
+        SpriteRenderer windowL = AddSlice(go.transform, "WindowL", rectSprite, new Vector2(0.52f, wallHeight * 0.44f), new Vector2(-area.width * 0.28f, wallY + wallHeight * 0.12f), windowDay, order + 2, key: ArtKeys.HouseWindow);
+        SpriteRenderer windowR = AddSlice(go.transform, "WindowR", rectSprite, new Vector2(0.52f, wallHeight * 0.44f), new Vector2(area.width * 0.28f, wallY + wallHeight * 0.12f), windowDay, order + 2, key: ArtKeys.HouseWindow);
         NightGlow glowL = windowL.gameObject.AddComponent<NightGlow>();
         glowL.dayColor = windowDay;
         glowL.nightColor = windowNight;
@@ -780,8 +794,10 @@ public class VillageGenerator : MonoBehaviour
         Color canopy = Pick(TreeColors);
 
         AddDisc(go.transform, "Shadow", size * 0.95f, new Vector2(0.06f, -0.08f), new Color(0f, 0f, 0f, 0.18f), order - 1);
-        AddDisc(go.transform, "Canopy", size, Vector2.zero, canopy, order);
-        AddDisc(go.transform, "CanopyInner", size * 0.58f, new Vector2(-size * 0.08f, size * 0.10f), Color.Lerp(canopy, Color.white, 0.22f), order + 1);
+        AddDisc(go.transform, "Canopy", size, Vector2.zero, canopy, order, key: ArtKeys.TreeCanopy);
+        // 「内部高光」只是程序化树冠的受光面；玩家给了整棵树的树冠图就不再叠它
+        if (!ArtOverride.Has(ArtKeys.TreeCanopy))
+            AddDisc(go.transform, "CanopyInner", size * 0.58f, new Vector2(-size * 0.08f, size * 0.10f), Color.Lerp(canopy, Color.white, 0.22f), order + 1);
 
         CircleCollider2D collider = go.AddComponent<CircleCollider2D>();
         collider.radius = size * 0.26f;
@@ -803,151 +819,70 @@ public class VillageGenerator : MonoBehaviour
         if (map != null) map.trees.Add(position);
     }
 
-    // ---------------- 食物 / 木箱 ----------------
+    // ---------------- 食物 / 可交互物品（内容目录驱动）----------------
 
-    void BuildFood()
+    /// <summary>
+    /// 生成这个区块的食物：先抽「食物位」（<see cref="foodSlotsMin"/>~<see cref="foodSlotsMax"/> 个），
+    /// 每个位按权重从 <see cref="FoodCatalog"/> 里抽一种；再处理定义里写了固定数量的（比如神奇果实）。
+    /// **想加新食物只要往 FoodCatalog 里注册一行**，这里不用改。
+    /// </summary>
+    void BuildFoods(bool hamlet)
     {
-        int target = RandInt(foodMin, foodMax + 1);
-        for (int i = 0; i < target; i++)
+        BuildSlots(FoodCatalog.All, foodSlotsMin, foodSlotsMax, hamlet, foodRoot);
+        BuildFixed(FoodCatalog.All, hamlet, foodRoot);
+    }
+
+    /// <summary>生成这个区块的可交互物品（木箱之类）：规则同 <see cref="BuildFoods"/>，内容来自 <see cref="ItemCatalog"/>。</summary>
+    void BuildItems(bool hamlet)
+    {
+        BuildSlots(ItemCatalog.All, itemSlotsMin, itemSlotsMax, hamlet, propsRoot);
+        BuildFixed(ItemCatalog.All, hamlet, propsRoot);
+    }
+
+    /// <summary>每区块抽 N 个「位」，每个位按权重抽一种（抽不到就提前收工，不白占位）。</summary>
+    void BuildSlots<T>(List<T> definitions, int min, int max, bool hamlet, Transform root) where T : class, IContentDefinition
+    {
+        if (definitions == null || max <= 0) return;
+
+        int slots = RandInt(min, max + 1);
+        for (int i = 0; i < slots; i++)
         {
-            Vector2 point;
-            if (!TryFindFreePoint(0.3f, 0.1f, out point)) continue;
-            CreateFood(point, Chance(0.66f));
+            T definition = SpawnKit.PickWeighted(definitions, rng, hamlet);
+            if (definition == null) return;
+            Place(definition, root);
         }
     }
 
-    void CreateFood(Vector2 position, bool berry)
+    /// <summary>处理定义里的「固定生成」（<c>minPerChunk</c>~<c>maxPerChunk</c>，先掷一次 chance）。</summary>
+    void BuildFixed<T>(List<T> definitions, bool hamlet, Transform root) where T : class, IContentDefinition
     {
-        occupied.Add(new Rect(position.x - 0.35f, position.y - 0.35f, 0.7f, 0.7f));
-        GameObject go = new GameObject(berry ? "Berry" : "Leaf");
-        go.transform.SetParent(foodRoot, false);
-        go.transform.position = new Vector3(position.x, position.y, 0f);
-        go.transform.localScale = Vector3.one * (berry ? 0.26f : 0.34f);
+        if (definitions == null) return;
 
-        SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
-        sr.sprite = berry ? berrySprite : leafSprite;
-        sr.sortingOrder = YOrder(position.y) + 1;
+        for (int i = 0; i < definitions.Count; i++)
+        {
+            T definition = definitions[i];
+            if (definition == null || definition.Spawn == null) continue;
 
-        CircleCollider2D collider = go.AddComponent<CircleCollider2D>();
-        collider.radius = 0.5f;
-        collider.isTrigger = true;
+            SpawnRule rule = definition.Spawn;
+            if (rule.maxPerChunk <= 0 || !rule.Includes(hamlet)) continue;
+            if (rule.chance < 1f && !Chance(rule.chance)) continue;
 
-        // 隐藏数值（分量）：决定吃下去恢复多少体力，不显示给玩家
-        int value = berry ? RandInt(6, 11) : RandInt(10, 15);
-        HiddenValue hidden = go.AddComponent<HiddenValue>();
-        hidden.value = value;
-        hidden.note = berry ? "果子：小分量" : "叶子：中等分量";
-
-        Edible edible = go.AddComponent<Edible>();
-        edible.nutrition = 1;
-        edible.satiety = value;
-
-        EntityInfo info = go.AddComponent<EntityInfo>();
-        info.title = berry ? "野果子" : "嫩叶";
-        info.kind = "食物";
-        info.description = berry
-            ? "随处可见的小果子。恢复的体力不多，但满地都是。"
-            : "一片嫩叶，比果子顶饱一些。";
-
-        go.AddComponent<Highlighter>().Setup(discSprite);
+            int count = RandInt(rule.minPerChunk, rule.maxPerChunk + 1);
+            for (int k = 0; k < count; k++) Place(definition, root);
+        }
     }
 
-    /// <summary>特殊食物：吃掉能让小虫长大（更大 / 更快 / 吃得更远 / 体力上限更高）。</summary>
-    void BuildSpecialFood()
+    /// <summary>找一块空地把它放下来（找不到就跳过这一次）。</summary>
+    void Place<T>(T definition, Transform root) where T : class, IContentDefinition
     {
-        if (!Chance(specialFoodChance)) return;
-
+        SpawnRule rule = definition.Spawn;
         Vector2 point;
-        if (!TryFindFreePoint(0.7f, 0.5f, out point, 80)) return;
-        occupied.Add(new Rect(point.x - 0.7f, point.y - 0.7f, 1.4f, 1.4f));
-        CreateSpecialFood(point);
-    }
+        if (!TryFindFreePoint(rule.clearance, rule.padding, out point)) return;
 
-    void CreateSpecialFood(Vector2 position)
-    {
-        GameObject go = new GameObject("SpecialFood");
-        go.transform.SetParent(foodRoot, false);
-        go.transform.position = new Vector3(position.x, position.y, 0f);
+        if (rule.footprint > 0.001f)
+            occupied.Add(new Rect(point.x - rule.footprint, point.y - rule.footprint, rule.footprint * 2f, rule.footprint * 2f));
 
-        int order = YOrder(position.y) + 2;
-        AddDisc(go.transform, "Halo", 1.55f, Vector2.zero, new Color(1f, 0.84f, 0.35f, 0.30f), order);
-        AddDisc(go.transform, "Body", 0.74f, Vector2.zero, new Color(0.97f, 0.76f, 0.25f), order + 1);
-        AddDisc(go.transform, "Inner", 0.44f, new Vector2(-0.05f, 0.06f), new Color(1f, 0.95f, 0.72f), order + 2);
-        AddDisc(go.transform, "SparkA", 0.18f, new Vector2(0.52f, 0.44f), new Color(1f, 0.97f, 0.85f), order + 2);
-        AddDisc(go.transform, "SparkB", 0.13f, new Vector2(-0.5f, -0.42f), new Color(1f, 0.97f, 0.85f), order + 2);
-
-        CircleCollider2D collider = go.AddComponent<CircleCollider2D>();
-        collider.radius = 0.8f;
-        collider.isTrigger = true;
-
-        // 隐藏数值（分量）：特殊食物的饱食度各不相同，越大的越顶饱
-        int value = RandInt(22, 31);
-        HiddenValue hidden = go.AddComponent<HiddenValue>();
-        hidden.value = value;
-        hidden.note = "特殊食物：大分量";
-
-        Edible edible = go.AddComponent<Edible>();
-        edible.nutrition = 5;
-        edible.satiety = value;
-        edible.growth = 1;
-
-        EntityInfo info = go.AddComponent<EntityInfo>();
-        info.title = "神奇果实";
-        info.kind = "特殊食物";
-        info.description = "吃下去小虫会长大一截：更大、跑得更快、捕食范围更广、体力上限更高。";
-
-        go.AddComponent<Highlighter>().Setup(discSprite);
-    }
-
-    void BuildCrates()
-    {
-        int target = RandInt(0, crateMax + 1);
-        for (int i = 0; i < target; i++)
-        {
-            Vector2 point;
-            if (!TryFindFreePoint(0.45f, 0.25f, out point, 100)) continue;
-            CreateCrate(point);
-        }
-    }
-
-    void CreateCrate(Vector2 position)
-    {
-        occupied.Add(new Rect(position.x - 0.55f, position.y - 0.55f, 1.1f, 1.1f));
-        GameObject go = new GameObject("Crate");
-        go.transform.SetParent(propsRoot, false);
-        go.transform.position = new Vector3(position.x, position.y, 0f);
-
-        float size = Rand(0.6f, 0.9f);
-        SpriteRenderer sr = AddSlice(go.transform, "Visual", rectSprite, Vector2.one, Vector2.zero, new Color(0.66f, 0.48f, 0.27f), 10);
-        sr.transform.localScale = Vector3.one * size;
-
-        BoxCollider2D collider = go.AddComponent<BoxCollider2D>();
-        collider.size = Vector2.one * size;
-
-        Rigidbody2D rb = go.AddComponent<Rigidbody2D>();
-        rb.bodyType = RigidbodyType2D.Kinematic;
-        rb.gravityScale = 0f;
-
-        go.AddComponent<Draggable>().weight = 1f;
-
-        // 木箱也有隐藏数值（分量）和一段介绍
-        HiddenValue hidden = go.AddComponent<HiddenValue>();
-        hidden.value = RandInt(12, 19);
-        hidden.note = "木箱：可搬动的道具";
-        EntityInfo info = go.AddComponent<EntityInfo>();
-        info.title = "木箱";
-        info.kind = "道具";
-        info.description = "搬到哪算哪的箱子。站在它前面按 F 就能搬起来，搬运时小虫会变慢；"
-            + "长到 " + BugGrowth.CrateLevel + " 级以后可以直接啃掉。";
-
-        // 木箱也能吃，要长到 2 级（HiddenValue 的分量决定吃下去回多少体力）
-        Edible edible = go.AddComponent<Edible>();
-        edible.nutrition = 3;
-        edible.requiredLevel = BugGrowth.CrateLevel;
-
-        // Highlighter 要在 YSort 之前加，保证它生成的发光底衬也被纳入深度排序
-        go.AddComponent<Highlighter>().Setup(roundRectSprite);
-        go.AddComponent<YSort>();
+        definition.Create(root, point, YOrder(point.y));
     }
 
     // ---------------- 地洞 / 地道 ----------------
@@ -972,15 +907,15 @@ public class VillageGenerator : MonoBehaviour
 
         // 地洞是「地面上的洞」，放 Ground 层：小虫和村民钻进去时不会被洞口盖住
         Color rim = tunnel ? new Color(0.34f, 0.42f, 0.40f) : new Color(0.44f, 0.34f, 0.24f);
-        AddDisc(go.transform, "Rim", 1.10f, Vector2.zero, rim, -820, true);
-        AddDisc(go.transform, "Hole", 0.80f, Vector2.zero, new Color(0.07f, 0.06f, 0.06f), -810, true);
-        AddDisc(go.transform, "HoleInner", 0.48f, new Vector2(0.04f, -0.05f), new Color(0.02f, 0.02f, 0.02f), -800, true);
+        AddDisc(go.transform, "Rim", 1.10f, Vector2.zero, rim, -820, true, ArtKeys.BurrowRim);
+        AddDisc(go.transform, "Hole", 0.80f, Vector2.zero, new Color(0.07f, 0.06f, 0.06f), -810, true, ArtKeys.BurrowHole);
+        AddDisc(go.transform, "HoleInner", 0.48f, new Vector2(0.04f, -0.05f), new Color(0.02f, 0.02f, 0.02f), -800, true, ArtKeys.BurrowInner);
 
         if (tunnel)
         {
             // 地道多堆两个小石头当标记，好认
-            AddDisc(go.transform, "StoneA", 0.24f, new Vector2(0.66f, 0.44f), new Color(0.56f, 0.56f, 0.53f), -795, true);
-            AddDisc(go.transform, "StoneB", 0.17f, new Vector2(0.84f, 0.26f), new Color(0.49f, 0.49f, 0.46f), -795, true);
+            AddDisc(go.transform, "StoneA", 0.24f, new Vector2(0.66f, 0.44f), new Color(0.56f, 0.56f, 0.53f), -795, true, ArtKeys.BurrowStone);
+            AddDisc(go.transform, "StoneB", 0.17f, new Vector2(0.84f, 0.26f), new Color(0.49f, 0.49f, 0.46f), -795, true, ArtKeys.BurrowStone);
         }
 
         Burrow burrow = go.AddComponent<Burrow>();
@@ -1078,8 +1013,8 @@ public class VillageGenerator : MonoBehaviour
         Color shirt = VillagerJobs.Shirt(job);
         shirt = Color.Lerp(shirt, rng.NextDouble() < 0.5 ? Color.white : Color.black, Rand(0.02f, 0.15f));
         Color skin = Pick(SkinColors);
-        AddRect(visual.transform, "Body", new Vector2(0.40f, 0.52f), new Vector2(0f, -0.12f), shirt, 0);
-        AddDisc(visual.transform, "Head", 0.36f, new Vector2(0f, 0.30f), skin, 1);
+        AddRect(visual.transform, "Body", new Vector2(0.40f, 0.52f), new Vector2(0f, -0.12f), shirt, 0, key: ArtKeys.VillagerBody);
+        AddDisc(visual.transform, "Head", 0.36f, new Vector2(0f, 0.30f), skin, 1, key: ArtKeys.VillagerHead);
 
         Villager villager = go.AddComponent<Villager>();
         villager.job = job;

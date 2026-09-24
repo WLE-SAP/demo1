@@ -15,6 +15,8 @@ public class BugVitality : MonoBehaviour
     public float drainPerSecond = 1f;
     [Tooltip("饿死后停留多久再回开始界面（秒）")]
     public float deathDelay = 1.8f;
+    [Tooltip("饿死后先弹结算面板，让玩家看清这一局干了什么；这段时间之后才回菜单（秒）")]
+    public float settlementSeconds = 7f;
     [Tooltip("饿死后存档里保留的体力比例")]
     [Range(0f, 1f)] public float respawnRatio = 0.6f;
 
@@ -92,7 +94,6 @@ public class BugVitality : MonoBehaviour
     void Die()
     {
         IsDead = true;
-        deathTimer = Mathf.Max(0.2f, deathDelay);
         Stamina = 0f;
 
         // 停住小虫：不能再走、不能再交互
@@ -105,7 +106,20 @@ public class BugVitality : MonoBehaviour
             Stamina = maxStamina * respawnRatio;
             autoSave.SaveNow();
         }
-        Debug.Log("[Bug] 饿死了…… 回到开始界面。");
+
+        // 先给玩家看一眼「这一局你干了些啥」（设计文档 §17 的关卡评分），再回菜单
+        SettlementPanel settlement = SettlementPanel.Instance;
+        if (settlement != null)
+        {
+            settlement.SetVisible(true, true);
+            deathTimer = Mathf.Max(0.2f, settlementSeconds);
+        }
+        else
+        {
+            deathTimer = Mathf.Max(0.2f, deathDelay);
+        }
+
+        Debug.Log("[Bug] 饿死了…… 看一眼本局战果，然后就回开始界面。");
     }
 
     void GoToMenu()

@@ -50,6 +50,15 @@ public class FoodDefinition : IContentDefinition
     /// <summary>吃下去长大几级（普通食物 0）。</summary>
     public int growth;
 
+    /// <summary>
+    /// 吃下去解锁哪个能力（配合 <see cref="abilityCharges"/>）。**要先把 <see cref="hasAbility"/> 置 true** ——
+    /// 枚举的 0 值是一个真实能力，没法拿它当「没有」用。
+    /// </summary>
+    public bool hasAbility;
+    public AbilityId ability = AbilityId.Shock;
+    /// <summary>吃一次补几点充能（第一次吃同时会永久解锁）。</summary>
+    public int abilityCharges = 2;
+
     /// <summary>固定恢复多少体力；-1 = 按隐藏数值「分量」算。</summary>
     public int satiety = -1;
 
@@ -94,6 +103,18 @@ public static class FoodIds
     public const string Berry = "berry";
     public const string Leaf = "leaf";
     public const string SpecialFood = "special_food";
+
+    // —— 能赋予能力的四样东西（吃掉解锁对应能力，见 AbilityId）——
+    /// <summary>旧电池：解锁【电击】。</summary>
+    public const string Battery = "battery";
+    /// <summary>破布团：解锁【伪装】。</summary>
+    public const string Trash = "trash";
+    /// <summary>孢子囊：解锁【分裂】。</summary>
+    public const string Spore = "spore";
+    /// <summary>锈齿轮：解锁【抖动】。</summary>
+    public const string Gear = "gear";
+    /// <summary>酸液瓶：解锁【腐蚀】。</summary>
+    public const string Acid = "acid";
 }
 
 /// <summary>
@@ -170,6 +191,13 @@ public static class FoodCatalog
         if (Find(FoodIds.Leaf) == null) Register(MakeLeaf());
         if (Find(FoodIds.SpecialFood) == null) Register(MakeSpecialFood());
 
+        // 能赋予能力的四样东西（吃掉解锁对应的能力）
+        if (Find(FoodIds.Battery) == null) Register(MakeBattery());
+        if (Find(FoodIds.Trash) == null) Register(MakeTrash());
+        if (Find(FoodIds.Spore) == null) Register(MakeSpore());
+        if (Find(FoodIds.Gear) == null) Register(MakeGear());
+        if (Find(FoodIds.Acid) == null) Register(MakeAcid());
+
         Debug.Log("[Content] 食物 " + All.Count + " 种：" + IdList());
     }
 
@@ -215,6 +243,14 @@ public static class FoodCatalog
         info.kind = definition.kind;
         info.description = definition.description;
 
+        // 「吃掉就有能力」的东西挂上能力标签；吃的逻辑按组件找它，所以加新东西不用改进食代码
+        if (definition.hasAbility)
+        {
+            AbilityPickup pickup = go.AddComponent<AbilityPickup>();
+            pickup.ability = definition.ability;
+            pickup.charges = definition.abilityCharges;
+        }
+
         go.AddComponent<Highlighter>().Setup(
             definition.rectHighlight ? ArtKeys.HighlightRect : ArtKeys.Highlight,
             ArtShapes.Get(definition.rectHighlight ? ArtShape.RoundRect : ArtShape.Round));
@@ -251,8 +287,19 @@ public static class FoodCatalog
             hiddenNote = "果子：小分量",
             title = "野果子",
             kind = "食物",
-            description = "随处可见的小果子。恢复的体力不多，但满地都是。",
-            spawn = SpawnRule.Pool(66f, 0.3f, 0.1f, 0.35f)
+            description = "掉在树底下的小果子。恢复的体力不多，但树下到处都是。",
+            // 「果子只长在树旁边」：优先落在树附近（这一片没树就退回普通落点，不会断供）
+            // 自然体系门控：草原 / 森林才有果子，沙漠里不长（沙漠吃仙人掌果，见 ContentPack）
+            spawn = new SpawnRule
+            {
+                weight = 66f,
+                clearance = 0.3f,
+                padding = 0.1f,
+                footprint = 0.35f,
+                nearTrees = true,
+                nearRadius = 2.2f,
+                nearMinDistance = 0.5f
+            }.InNatures(NatureKind.Grassland, NatureKind.Forest)
         };
     }
 
@@ -271,7 +318,18 @@ public static class FoodCatalog
             title = "嫩叶",
             kind = "食物",
             description = "一片嫩叶，比果子顶饱一些。",
-            spawn = SpawnRule.Pool(34f, 0.3f, 0.1f, 0.35f)
+            // 「叶子只长在树旁边」：优先落在树附近（这片没树就退回普通落点）
+            // 和果子一样：沙漠里不长嫩叶
+            spawn = new SpawnRule
+            {
+                weight = 34f,
+                clearance = 0.3f,
+                padding = 0.1f,
+                footprint = 0.35f,
+                nearTrees = true,
+                nearRadius = 2.4f,
+                nearMinDistance = 0.6f
+            }.InNatures(NatureKind.Grassland, NatureKind.Forest)
         };
     }
 
@@ -299,9 +357,160 @@ public static class FoodCatalog
         };
     }
 
+    // ---------------- 能赋予能力的四样东西 ----------------
+    //
+    // 它们都是「村庄里才刷」的稀有物：长大一次（2 级）才吃得下，所以能力是「先长大一点 → 才能拿到新玩法」，
+    // 和设计文档「为了获得新能力去旧区域搞事情」的循环一致。
+
+    /// <summary>旧电池：吃掉解锁【电击】。</summary>
+    static FoodDefinition MakeBattery()
+    {
+        return new FoodDefinition
+        {
+            id = FoodIds.Battery,
+            artKey = ArtKeys.Battery,
+            shape = ArtShape.Rect,
+            size = 0.30f,
+            nutrition = 2,
+            requiredLevel = 2,
+            satietyMin = 8,
+            satietyMax = 13,
+            hiddenNote = "旧电池：还有点电",
+            title = "旧电池",
+            kind = "有用的小东西",
+            description = "不知道谁丢的电池，里面还剩一点电。吃下去好像能电人了。",
+            hasAbility = true,
+            ability = AbilityId.Shock,
+            abilityCharges = 2,
+            // 「电池在发电站附近比较多」：优先落在发电站旁边（没有发电站就退回普通落点）
+            spawn = new SpawnRule
+            {
+                weight = 14f,
+                clearance = 0.35f,
+                padding = 0.2f,
+                footprint = 0.35f,
+                nearAnchor = "power",
+                nearRadius = 3.6f,
+                nearMinDistance = 0.8f
+            }
+        };
+    }
+
+    /// <summary>破布团：吃掉解锁【伪装】。</summary>
+    static FoodDefinition MakeTrash()
+    {
+        return new FoodDefinition
+        {
+            id = FoodIds.Trash,
+            artKey = ArtKeys.Trash,
+            shape = ArtShape.Round,
+            size = 0.32f,
+            nutrition = 1,
+            requiredLevel = 2,
+            satietyMin = 6,
+            satietyMax = 10,
+            hiddenNote = "破布团：没什么营养",
+            title = "破布团",
+            kind = "没用的小东西",
+            description = "一团灰扑扑的破布。吃下去以后，身上好像也有点像没人要的东西了。",
+            hasAbility = true,
+            ability = AbilityId.Disguise,
+            abilityCharges = 2,
+            spawn = SpawnRule.Pool(12f, 0.35f, 0.2f, 0.35f)
+        };
+    }
+
+    /// <summary>孢子囊：吃掉解锁【分裂】。</summary>
+    static FoodDefinition MakeSpore()
+    {
+        return new FoodDefinition
+        {
+            id = FoodIds.Spore,
+            artKey = ArtKeys.Spore,
+            shape = ArtShape.Round,
+            size = 0.30f,
+            nutrition = 2,
+            requiredLevel = 2,
+            satietyMin = 9,
+            satietyMax = 14,
+            hiddenNote = "孢子囊：一肚子孢子",
+            title = "孢子囊",
+            kind = "古怪的小东西",
+            description = "鼓鼓的孢子囊。吃下去以后身体会掉下几个一模一样的自己。",
+            hasAbility = true,
+            ability = AbilityId.Split,
+            abilityCharges = 1,
+            spawn = SpawnRule.Pool(9f, 0.35f, 0.2f, 0.35f),
+            decorate = AddSporeDetail
+        };
+    }
+
+    /// <summary>锈齿轮：吃掉解锁【抖动】。</summary>
+    static FoodDefinition MakeGear()
+    {
+        return new FoodDefinition
+        {
+            id = FoodIds.Gear,
+            artKey = ArtKeys.Gear,
+            shape = ArtShape.Round,
+            size = 0.28f,
+            nutrition = 3,
+            requiredLevel = 2,
+            satietyMin = 7,
+            satietyMax = 12,
+            hiddenNote = "锈齿轮：硬东西",
+            title = "锈齿轮",
+            kind = "硬邦邦的小东西",
+            description = "从谁家机器上掉下来的齿轮，牙口不好的啃不动。吃下去浑身有使不完的劲。",
+            hasAbility = true,
+            ability = AbilityId.Shake,
+            abilityCharges = 2,
+            spawn = SpawnRule.Pool(11f, 0.35f, 0.2f, 0.35f)
+        };
+    }
+
+    /// <summary>酸液瓶：吃掉解锁【腐蚀】。</summary>
+    static FoodDefinition MakeAcid()
+    {
+        return new FoodDefinition
+        {
+            id = FoodIds.Acid,
+            artKey = ArtKeys.Acid,
+            shape = ArtShape.Round,
+            size = 0.30f,
+            nutrition = 2,
+            requiredLevel = 2,
+            satietyMin = 5,
+            satietyMax = 9,
+            hiddenNote = "酸液瓶：喝下去肚子里烧烧的",
+            title = "酸液瓶",
+            kind = "古怪的小东西",
+            description = "瓶子里晃荡着不知名的液体。喝下去以后，好像能把嘴里的东西蚀穿。",
+            hasAbility = true,
+            ability = AbilityId.Corrode,
+            abilityCharges = 2,
+            spawn = SpawnRule.Pool(10f, 0.35f, 0.2f, 0.35f)
+        };
+    }
+
+    /// <summary>孢子囊的额外装饰：一颗小小的高光点（看起来鼓鼓的）。</summary>
+    static void AddSporeDetail(GameObject go)
+    {
+        // 有图片就只用图片：程序化的高光点会盖在美术图上，反而添乱
+        if (ArtOverride.Has(ArtKeys.Spore)) return;
+
+        SpriteRenderer body = go.GetComponentInChildren<SpriteRenderer>();
+        int order = body != null ? body.sortingOrder : SpawnKit.YOrder(go.transform.position.y) + 1;
+        ArtShapes.AddSprite(go.transform, "Blip", ArtShape.Round, 0.22f,
+            new Vector2(0.06f, 0.07f), new Color(0.92f, 0.95f, 0.78f, 0.85f), order + 1);
+    }
+
     /// <summary>神奇果实的额外装饰：一圈光晕 + 内部亮斑 + 两颗小星星。</summary>
     static void AddSpecialFoodDetail(GameObject go)
     {
+        // 有图片就只用图片（光晕 / 亮斑 / 星星都是程序化的「凑数」，美术给了图就不该再叠上去）
+        if (ArtOverride.Has(ArtKeys.SpecialFood)) return;
+
         SpriteRenderer body = go.GetComponentInChildren<SpriteRenderer>();
         int order = body != null ? body.sortingOrder : SpawnKit.YOrder(go.transform.position.y) + 1;
 

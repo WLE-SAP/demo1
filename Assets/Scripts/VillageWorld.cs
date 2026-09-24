@@ -2,15 +2,19 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// 无限世界的流式加载器：以小虫为中心，按区块（chunk）生成 / 回收村庄内容。
+/// 无限世界的流式加载器：以小虫为中心，按区块（chunk）生成 / 回收世界内容。
 ///
 /// <list type="bullet">
-/// <item>小虫走到哪，附近的区块就生成出来（建筑、设施、树、食物、村民都是随机刷的）；</item>
+/// <item>小虫走到哪，附近的区块就生成出来（地貌、建筑、设施、树、食物、村民都是按区块坐标 + 种子生成的）；</item>
 /// <item>走出 <see cref="keepRadius"/> 之外的区块会被回收，内存不会无限涨；</item>
-/// <item>同一个区块坐标 + 同一个世界种子永远生成一样的内容，所以走远再回头村庄还是原样；</item>
-/// <item>离小虫超过 <see cref="freezeRadius"/> 的村民会被「冻结」：停状态机、停物理、可选关渲染，
+/// <item>同一个区块坐标 + 同一个世界种子永远生成一样的内容，所以走远再回头世界还是原样；</item>
+/// <item>离小虫超过 <see cref="WorldBiome.FreezeRadius"/> 的村民会被「冻结」：停状态机、停物理、可选关渲染，
 ///       走回附近再自动解冻，用来省 CPU。</item>
 /// </list>
+///
+/// **每个区块属于一种自然体系与一种聚落体系**（见 <see cref="WorldBiome"/>），
+/// 所以「视野里至少要有几个村民」「多远冻结」这些也跟着**当前区块的聚落**走 ——
+/// 城市里到处都有人，荒野里走半天碰不到一个。
 /// </summary>
 public class VillageWorld : MonoBehaviour
 {
@@ -34,14 +38,9 @@ public class VillageWorld : MonoBehaviour
     [Tooltip("流式检查间隔（秒）")]
     public float streamInterval = 0.25f;
 
-    [Header("地图类型（荒野 / 农村 / 城市）")]
-    [Tooltip("决定村子密度与 npc 多少；主菜单选完地图后由 ApplyMapKind 覆盖")]
-    public MapKind mapKind = MapKind.Village;
-
     [Header("村民冻结（省资源）")]
     public bool freezeFarVillagers = true;
-    [Tooltip("离小虫超过这个距离的村民会被冻结")]
-    public float freezeRadius = 26f;
+    [Tooltip("冻结距离与「视野里要几个人」按当前区块的聚落取值，见 WorldBiome.FreezeRadius")]
     public float freezeCheckInterval = 0.5f;
 
     [Header("地道配对")]
@@ -50,14 +49,11 @@ public class VillageWorld : MonoBehaviour
     [Tooltip("两头地道的最远距离（太远不方便）")]
     public float tunnelMaxGap = 110f;
 
-    [Header("保证视野里有村民")]
-    public bool keepVillagersInView = true;
-    [Tooltip("可见范围内至少要有这么多村民")]
-    public int minVillagersInView = 2;
+    [Header("保证视野里有村民（按当前区块的聚落，见 WorldBiome）")]
     [Tooltip("可见范围的一半（宽 / 高，比相机略小一圈）")]
     public Vector2 viewHalfSize = new Vector2(13f, 7.5f);
-    [Tooltip("每个区块最多为此补几个村民，防止人越补越多")]
-    public int maxExtraPerChunk = 4;
+    [Tooltip("临时把「视野里至少要有几个人」抬高的加成（混乱 4 级会让来看热闹的人变多）")]
+    public int extraMinVillagers;
 
     readonly Dictionary<Vector2Int, GameObject> chunks = new Dictionary<Vector2Int, GameObject>();
     readonly List<Villager> villagers = new List<Villager>();
@@ -81,6 +77,13 @@ public class VillageWorld : MonoBehaviour
     public int VillagersInView { get; private set; }
     public Vector2Int CurrentChunk { get { return ChunkOf(TargetPosition); } }
 
+    /// <summary>小虫当前所在区块的自然体系（HUD 显示「森林 · 农村」用）。</summary>
+    public NatureKind CurrentNature { get { return WorldBiome.NatureAt(CurrentChunk, worldSeed); } }
+    /// <summary>小虫当前所在区块的聚落体系。</summary>
+    public SettlementKind CurrentSettlement { get { return WorldBiome.SettlementAt(CurrentChunk, worldSeed); } }
+    /// <summary>合起来的一句话，例如「森林 · 农村」。</summary>
+    public string CurrentBiomeText { get { return WorldBiome.Describe(CurrentNature, CurrentSettlement); } }
+
     Vector2 TargetPosition
     {
         get { return target != null ? (Vector2)target.position : Vector2.zero; }
@@ -102,44 +105,26 @@ public class VillageWorld : MonoBehaviour
     {
         // AutoSave（如果在 GameDirector 上）可能已经先读过档并把世界建好了，别重复生成
         if (built) return;
-        // 玩家在主菜单点了「继续游戏」：等 AutoSave 用存档里的地图类型与种子来建
+        // 玩家在主菜单点了「继续游戏」：等 AutoSave 用存档里的种子来建
         if (SaveSystem.ContinueRequested) return;
 
+        // 不再有「开局选地图」：世界每次都是一整片新的随机地图，
+        // 地貌与聚落由「种子 + 区块坐标」决定（见 WorldBiome）
         if (randomSeedEachRun) worldSeed = Random.Range(1, int.MaxValue);
-        ApplyMapKind(MapProfiles.Current);
         Stream(true);
     }
 
-    /// <summary>
-    /// 套用地图类型（必须在建区块之前调用）：把荒野 / 农村 / 城市的密度参数
-    /// 覆盖到生成器与流式加载器上，之后每个区块都按这套参数生成。
-    /// </summary>
-    public void ApplyMapKind(MapKind kind)
-    {
-        mapKind = kind;
-        MapProfiles.Current = kind;
-        MapProfiles.Apply(kind, builder, this);
-    }
-
-    /// <summary>用指定地图与种子重建整个世界（读档用）。</summary>
-    public void LoadWorld(int seed, MapKind kind)
-    {
-        worldSeed = seed;
-        ApplyMapKind(kind);
-        Rebuild();
-    }
-
-    /// <summary>用指定种子重建整个世界（地图类型沿用当前选中的）。</summary>
+    /// <summary>用指定种子重建整个世界（读档用）。</summary>
     public void LoadWorld(int seed)
     {
-        LoadWorld(seed, MapProfiles.Current);
+        worldSeed = seed;
+        Rebuild();
     }
 
     /// <summary>换一个随机种子重新开一局。</summary>
     public void NewWorld()
     {
         worldSeed = Random.Range(1, int.MaxValue);
-        ApplyMapKind(MapProfiles.Current);
         Rebuild();
     }
 
@@ -185,12 +170,20 @@ public class VillageWorld : MonoBehaviour
     }
 
     /// <summary>
-    /// 保证小虫视野里不少于 <see cref="minVillagersInView"/> 个村民：
-    /// 不够时就近补人（挂到当前区块下，区块回收时一起销毁），每个区块最多补 <see cref="maxExtraPerChunk"/> 个。
+    /// 保证小虫视野里不少于「这个聚落该有的人数」（<see cref="WorldBiome.MinVillagersInView"/>）：
+    /// 不够时就近补人（挂到当前区块下，区块回收时一起销毁），每个区块最多补
+    /// <see cref="WorldBiome.MaxExtraPerChunk"/> 个。**荒野一个都不补** —— 人少才像荒野。
     /// </summary>
     void EnsureVillagersInView()
     {
-        if (!keepVillagersInView || builder == null || target == null) return;
+        if (builder == null || target == null) return;
+
+        SettlementKind settlement = CurrentSettlement;
+        if (!WorldBiome.KeepVillagersInView(settlement)) return;
+
+        int required = WorldBiome.MinVillagersInView(settlement) + Mathf.Max(0, extraMinVillagers);
+        int cap = WorldBiome.MaxExtraPerChunk(settlement);
+        if (required <= 0 || cap <= 0) return;
 
         Vector2 self = target.position;
         int count = 0;
@@ -202,7 +195,7 @@ public class VillageWorld : MonoBehaviour
             if (Mathf.Abs(delta.x) <= viewHalfSize.x && Mathf.Abs(delta.y) <= viewHalfSize.y) count++;
         }
         VillagersInView = count;
-        if (count >= minVillagersInView) return;
+        if (count >= required) return;
 
         Vector2Int coord = ChunkOf(self);
         GameObject chunk;
@@ -210,13 +203,13 @@ public class VillageWorld : MonoBehaviour
 
         int spawned;
         extraSpawned.TryGetValue(coord, out spawned);
-        if (spawned >= maxExtraPerChunk) return;
+        if (spawned >= cap) return;
 
         Transform parent = chunk.transform.Find("Villagers");
         if (parent == null) return;
 
-        int need = minVillagersInView - count;
-        for (int i = 0; i < need && spawned < maxExtraPerChunk; i++)
+        int need = required - count;
+        for (int i = 0; i < need && spawned < cap; i++)
         {
             Villager villager = builder.SpawnWalkerNear(self, parent, walkerIndex++);
             if (villager == null) break;
@@ -344,12 +337,13 @@ public class VillageWorld : MonoBehaviour
         TunnelPairs = Burrow.CountTunnels() / 2;
     }
 
-    /// <summary>远处的村民冻结，近的恢复。</summary>
+    /// <summary>远处的村民冻结，近的恢复（冻结距离按当前区块的聚落取值）。</summary>
     public void UpdateFreeze()
     {
         if (target == null) return;
 
         Vector2 self = target.position;
+        float freezeRadius = WorldBiome.FreezeRadius(CurrentSettlement);
         float sqr = freezeRadius * freezeRadius;
         int frozen = 0;
 

@@ -53,6 +53,7 @@ public class BugController : MonoBehaviour
     float dashTimer;
     float nextDashTime;
     Vector2 dashDirection;
+    float nextDashNoiseTime;
 
     /// <summary>1 = 正在冲刺（尾巴摆到最快）。</summary>
     public float DashBlend { get { return dashTimer > 0f ? 1f : 0f; } }
@@ -69,6 +70,9 @@ public class BugController : MonoBehaviour
         Vector2 direction = hasDestination ? destination - rb.position : facing;
         if (direction.sqrMagnitude < 0.0001f) direction = facing;
         dashDirection = direction.normalized;
+
+        // 冲刺是「跑起来」的动静：立刻开始出声（实际发声在 FixedUpdate 里按间隔发）
+        nextDashNoiseTime = Time.time;
     }
 
     Rigidbody2D rb;
@@ -107,6 +111,13 @@ public class BugController : MonoBehaviour
 
     /// <summary>是否躲在地洞里（躲着的时候村民看不见它）。</summary>
     public bool IsHidden { get { return hidden; } }
+    /// <summary>
+    /// 是否正伪装着（<see cref="AbilitySet"/> 的能力）。
+    /// 村民的 <see cref="Villager.CanSeeBug"/> 会问这个值：伪装期间除非贴到脸上，否则认不出来。
+    /// </summary>
+    public bool IsDisguised { get { return AbilitySet.Instance != null && AbilitySet.Instance.IsDisguised; } }
+    /// <summary>转身整圈里有没有正在遮住小虫的伪装（给 HUD / 调试看）。</summary>
+    public bool IsInvisibleToVillagers { get { return hidden || IsDisguised; } }
     /// <summary>躲进去的那个地洞。</summary>
     public Burrow CurrentBurrow { get { return hiddenBurrow; } }
     /// <summary>身边有没有可以钻的地洞（HUD 提示用）。</summary>
@@ -262,6 +273,13 @@ public class BugController : MonoBehaviour
             // 冲刺：短时间内直接沿冲刺方向高速移动，目标点保留（冲完接着走）
             dashTimer -= Time.fixedDeltaTime;
             desired = dashDirection * dashSpeed;
+
+            // 冲刺期间每隔一小段就出一声（响度比脚步大，附近的村民会注意到）
+            if (Time.time >= nextDashNoiseTime)
+            {
+                nextDashNoiseTime = Time.time + 0.25f;
+                GameEvent.RaiseNoise(rb.position, NoiseKind.Dash);
+            }
         }
         else if (hasDestination)
         {

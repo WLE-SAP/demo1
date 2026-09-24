@@ -34,6 +34,22 @@ public static class AudioOverride
         { AudioKeys.UiClick, new[] { "uiclick", "click", "button", "ui", "menuclick" } },
         { AudioKeys.Bgm,     new[] { "bgm", "bgmgame", "bgmgameplay", "gamemusic", "gameplaymusic", "music" } },
         { AudioKeys.BgmMenu, new[] { "bgmmenu", "menubgm", "menumusic", "musicmenu" } },
+
+        // 能力（放技能时响一次）
+        { AudioKeys.AbilityUnlock,   new[] { "abilityunlock", "unlock", "newability", "acquired", "gain" } },
+        { AudioKeys.AbilityShock,    new[] { "abilityshock", "shock", "electric", "zap", "spark" } },
+        { AudioKeys.AbilityDisguise, new[] { "abilitydisguise", "disguise", "hide", "camouflage" } },
+        { AudioKeys.AbilitySplit,    new[] { "abilitysplit", "split", "duplicate", "clone" } },
+        { AudioKeys.AbilityShake,    new[] { "abilityshake", "shake", "tremble", "rumble" } },
+        { AudioKeys.AbilityCorrode,  new[] { "abilitycorrode", "corrode", "acid", "melt" } },
+
+        // 事件
+        { AudioKeys.Break, new[] { "break", "smash", "crash", "shatter", "woodbreak" } },
+        { AudioKeys.Alarm, new[] { "alarm", "siren", "warning" } },
+        { AudioKeys.Slip,  new[] { "slip", "fall", "trip", "wipeout" } },
+        { AudioKeys.Fire,  new[] { "fire", "burn", "flame", "ignite" } },
+        { AudioKeys.Bell,  new[] { "bell", "chime", "gong" } },
+        { AudioKeys.Swarm, new[] { "swarm", "bees", "bee", "buzz", "insects" } },
     };
 
     /// <summary>自动忽略的常见前缀（归一化之后的名字再比较，所以 sfx_eat → eat）。</summary>
@@ -192,4 +208,32 @@ public static class AudioKeys
     public const string Bgm = "bgm";
     /// <summary>开始界面（MainMenu）的背景音乐，循环播放。</summary>
     public const string BgmMenu = "bgm_menu";
+
+    // —— 能力：放技能时响一次（没有放音频就是安静的，接口先留着）——
+    /// <summary>**解锁一个新能力**时响一次（配合局部黑屏 + 剧烈抖动那一下）。</summary>
+    public const string AbilityUnlock = "ability_unlock";
+    /// <summary>电击（含它引爆的油桶 / 拉响的警报）。</summary>
+    public const string AbilityShock = "ability_shock";
+    /// <summary>伪装。</summary>
+    public const string AbilityDisguise = "ability_disguise";
+    /// <summary>分裂。</summary>
+    public const string AbilitySplit = "ability_split";
+    /// <summary>强制抖动。</summary>
+    public const string AbilityShake = "ability_shake";
+    /// <summary>腐蚀。</summary>
+    public const string AbilityCorrode = "ability_corrode";
+
+    // —— 事件音效（都是「事情发生了」的那一下）——
+    /// <summary>东西被打碎 / 打烂（可破坏物、电线剪断、摔跤都算）。</summary>
+    public const string Break = "break";
+    /// <summary>警报响起。</summary>
+    public const string Alarm = "alarm";
+    /// <summary>村民踩到水洼滑倒。</summary>
+    public const string Slip = "slip";
+    /// <summary>起火 / 火势蔓延。</summary>
+    public const string Fire = "fire";
+    /// <summary>敲钟。</summary>
+    public const string Bell = "bell";
+    /// <summary>蜂群炸开。</summary>
+    public const string Swarm = "swarm";
 }

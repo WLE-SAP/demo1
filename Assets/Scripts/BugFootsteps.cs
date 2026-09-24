@@ -61,5 +61,8 @@ public class BugFootsteps : MonoBehaviour
         distance = 0f;
         nextStepTime = Time.time + minInterval;
         AudioOverridePlayer.Play(AudioKeys.Step, volume, 1f + Random.Range(-pitchVariation, pitchVariation));
+
+        // 脚步也是有动静的：附近的村民听得见（响度很低，只有贴得近的人才注意到）
+        GameEvent.RaiseNoise(transform.position, NoiseKind.Step);
     }
 }

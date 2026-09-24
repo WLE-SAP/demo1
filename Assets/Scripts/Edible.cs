@@ -24,6 +24,13 @@ public class Edible : MonoBehaviour
 
     public bool IsConsumed { get; private set; }
 
+    /// <summary>
+    /// 「被吃掉」的回调：留给需要知道「自己被吃了」的东西（电线被吃掉 → 断电之类）。
+    /// 只在**被人吃掉**时触发；区块回收 / 被销毁不会触发，所以不会出现
+    /// 「走远一趟回来，村里的电全断了」这种事。
+    /// </summary>
+    public System.Action<Edible> onConsumed;
+
     /// <summary>小虫这个等级（<see cref="BugGrowth.DisplayLevel"/> 的口径）吃不吃得下它。</summary>
     public bool CanBeEatenBy(int bugLevel)
     {
@@ -51,6 +58,10 @@ public class Edible : MonoBehaviour
         if (IsConsumed) return;
         IsConsumed = true;
         All.Remove(this);
+
+        // 先通知（比如电线被吃了要断电），再播吞下去的动画
+        if (onConsumed != null) onConsumed(this);
+
         StartCoroutine(ConsumeRoutine(mouth));
     }
 

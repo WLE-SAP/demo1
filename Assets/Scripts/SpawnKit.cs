@@ -7,8 +7,11 @@ using UnityEngine;
 /// spawn = SpawnRule.Pool(20f)                                  // 每区块的食物位里有 20 的权重被抽中
 /// spawn = new SpawnRule { weight = 5f, hamletOnly = true }      // 只在村庄区块、权重 5
 /// spawn = SpawnRule.Fixed(1, 2, 0.5f)                          // 每个区块固定 1~2 个（50% 的区块才有）
+/// spawn = SpawnRule.Pool(20f).InNatures(NatureKind.Forest)       // 只长在森林里（蘑菇）
+/// spawn = SpawnRule.Pool(10f).InSettlements(SettlementKind.City) // 只刷在城市里（垃圾桶）
 /// </code>
 /// 注意：这是 class 而不是 struct，所以「不写的字段」= 类里给的默认值，**不要**用 <c>new SpawnRule()</c> 之后再手动补全。
+/// 「聚落 × 自然」两套体系见 <see cref="WorldBiome"/>。
 /// </summary>
 public class SpawnRule
 {
@@ -22,11 +25,37 @@ public class SpawnRule
     /// <summary>固定生成前先掷一次的几率：1 = 必出，0.45 = 45% 的区块有。</summary>
     public float chance = 1f;
 
-    /// <summary>只在村庄区块生成（野外区块不刷）。</summary>
+    /// <summary>只在村庄区块生成（荒野区块不刷）。村庄 = 农村 + 城市。</summary>
     public bool hamletOnly;
 
     /// <summary>只在野外区块生成（村庄区块不刷）。</summary>
     public bool wildOnly;
+
+    // ---------------- 按「聚落 / 自然体系」门控（2026-09-25 加）----------------
+    //
+    // 世界现在由两套体系组成（见 WorldBiome）：聚落决定「有没有人、有没有房子」，
+    // 自然决定「长什么样」。这里就是内容与这两套体系的挂接点：
+    // 蘑菇只在森林里长、垃圾桶只在城市里刷、麦穗只长在草原上。
+
+    /// <summary>只在这些聚落里生成；null 或空 = 所有聚落都可以。</summary>
+    public SettlementKind[] settlements;
+
+    /// <summary>只在这些自然体系里生成；null 或空 = 所有自然体系都可以。</summary>
+    public NatureKind[] natures;
+
+    /// <summary>限定自然体系（可读写法：<c>SpawnRule.Pool(20f).InNatures(NatureKind.Forest)</c>）。</summary>
+    public SpawnRule InNatures(params NatureKind[] kinds)
+    {
+        natures = kinds;
+        return this;
+    }
+
+    /// <summary>限定聚落（可读写法：<c>SpawnRule.Pool(10f).InSettlements(SettlementKind.City)</c>）。</summary>
+    public SpawnRule InSettlements(params SettlementKind[] kinds)
+    {
+        settlements = kinds;
+        return this;
+    }
 
     /// <summary>找空地时的占地半径（越大越难挤进密集的地方）。</summary>
     public float clearance = 0.3f;
@@ -36,6 +65,23 @@ public class SpawnRule
 
     /// <summary>与别的东西之间额外留的间隙。</summary>
     public float padding = 0.1f;
+
+    // ---------------- 就近生成（2026-09-25 加）----------------
+    //
+    // 让「什么长在哪」有生活感：果子 / 嫩叶只长在树旁边，电池聚在发电站附近。
+    // 找不到参照物时会**自动退回普通随机落点**（不会因为这一片没树就什么都不刷）。
+
+    /// <summary>只在树旁边生成（<see cref="nearRadius"/> 以内要有树）。</summary>
+    public bool nearTrees;
+
+    /// <summary>只在某类设施旁边生成（填 <see cref="VillageMap.AddAnchor"/> 里的种类名，例如 "power"）。</summary>
+    public string nearAnchor;
+
+    /// <summary>贴着参照物多近（世界单位）。</summary>
+    public float nearRadius = 2.5f;
+
+    /// <summary>离参照物至少多远（0 = 贴着也行）。</summary>
+    public float nearMinDistance = 0.5f;
 
     /// <summary>进随机池：在每个「位」里按 <paramref name="weight"/> 抽中它。</summary>
     public static SpawnRule Pool(float weight, float clearance = 0.3f, float padding = 0.1f, float footprint = 0.35f)
@@ -63,10 +109,27 @@ public class SpawnRule
         };
     }
 
-    /// <summary>这个区块（村庄 / 野外）该不该生成它。</summary>
-    public bool Includes(bool hamlet)
+    /// <summary>这个区块（哪种聚落 + 哪种自然体系）该不该生成它。</summary>
+    public bool Includes(SettlementKind settlement, NatureKind nature)
     {
-        return (hamlet || !hamletOnly) && (!hamlet || !wildOnly);
+        // hamletOnly / wildOnly 是「村庄 / 野外」的老写法，映射到新的聚落语义上（村庄 = 农村 + 城市）
+        if (hamletOnly && settlement == SettlementKind.Wilderness) return false;
+        if (wildOnly && settlement != SettlementKind.Wilderness) return false;
+        if (settlements != null && settlements.Length > 0 && !Contains(settlements, settlement)) return false;
+        if (natures != null && natures.Length > 0 && !Contains(natures, nature)) return false;
+        return true;
+    }
+
+    static bool Contains(SettlementKind[] list, SettlementKind value)
+    {
+        for (int i = 0; i < list.Length; i++) if (list[i] == value) return true;
+        return false;
+    }
+
+    static bool Contains(NatureKind[] list, NatureKind value)
+    {
+        for (int i = 0; i < list.Length; i++) if (list[i] == value) return true;
+        return false;
     }
 }
 
@@ -99,16 +162,17 @@ public static class SpawnKit
     }
 
     /// <summary>
-    /// 从目录里按权重抽一个（跳过 weight = 0 的、以及当前区块不允许的）；
+    /// 从目录里按权重抽一个（跳过 weight = 0 的、以及当前区块的聚落 / 自然体系不允许的）；
     /// 一个都抽不到（没注册 / 权重全 0 / 都不允许）时返回 null。
     /// </summary>
-    public static T PickWeighted<T>(List<T> definitions, System.Random rng, bool hamlet) where T : class, IContentDefinition
+    public static T PickWeighted<T>(List<T> definitions, System.Random rng, SettlementKind settlement, NatureKind nature)
+        where T : class, IContentDefinition
     {
         float total = 0f;
         for (int i = 0; i < definitions.Count; i++)
         {
             T def = definitions[i];
-            if (!Eligible(def, hamlet)) continue;
+            if (!Eligible(def, settlement, nature)) continue;
             total += def.Spawn.weight;
         }
         if (total <= 0f) return null;
@@ -118,7 +182,7 @@ public static class SpawnKit
         for (int i = 0; i < definitions.Count; i++)
         {
             T def = definitions[i];
-            if (!Eligible(def, hamlet)) continue;
+            if (!Eligible(def, settlement, nature)) continue;
             last = def;
             roll -= def.Spawn.weight;
             if (roll <= 0f) return def;
@@ -126,8 +190,9 @@ public static class SpawnKit
         return last;
     }
 
-    static bool Eligible<T>(T def, bool hamlet) where T : class, IContentDefinition
+    static bool Eligible<T>(T def, SettlementKind settlement, NatureKind nature) where T : class, IContentDefinition
     {
-        return def != null && def.Spawn != null && def.Spawn.weight > 0f && def.Spawn.Includes(hamlet);
+        return def != null && def.Spawn != null && def.Spawn.weight > 0f
+            && def.Spawn.Includes(settlement, nature);
     }
 }

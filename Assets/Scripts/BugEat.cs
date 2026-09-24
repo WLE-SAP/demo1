@@ -130,6 +130,17 @@ public class BugEat : MonoBehaviour
         // 吞下去的这一刻出声（没有放 eat 音频就是静音）
         AudioOverridePlayer.Play(AudioKeys.Eat);
 
+        // 有些东西吃下去能获得能力（旧电池 → 电击、破布团 → 伪装……）
+        AbilitySet.GrantFromPickup(food.GetComponent<AbilityPickup>());
+
+        // 吃掉的是村民（后面的对话/连锁都靠这个事件知道）
+        Villager victim = food.GetComponent<Villager>();
+
+        // 吞东西是有动静的（村民听得见）：吃村民比吃果子响得多（那是出了大事）
+        Vector2 noiseAt = mouth != null ? (Vector2)mouth.position : (Vector2)transform.position;
+        GameEvent.RaiseNoise(noiseAt, victim != null ? GameEvent.DropLoudness : GameEvent.EatLoudness, NoiseKind.Eat);
+        GameEvent.RaiseEaten(food, noiseAt, victim != null);
+
         // 恢复体力：不同食物（隐藏数值「分量」不同）恢复的量不一样
         if (vitality != null) vitality.AddStamina(food.SatietyAmount);
 
@@ -140,8 +151,7 @@ public class BugEat : MonoBehaviour
             Debug.Log("[Bug] 长大到 " + growth.DisplayLevel + " 级（体型 ×" + growth.SizeMultiplier.ToString("F2") + "）");
         }
 
-        // 吃掉的是村民：看见这一幕的村民从此会躲着小虫
-        Villager victim = food.GetComponent<Villager>();
+        // 现场看到这一幕的村民从此会躲着小虫
         if (victim != null) Villager.ReportEaten(victim);
 
         food.Consume(mouth);

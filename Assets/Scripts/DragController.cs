@@ -66,6 +66,9 @@ public class DragController : MonoBehaviour
         SetSimulated(held, false);
         if (bug != null) bug.IsDragging = true;
         AudioOverridePlayer.Play(AudioKeys.Pickup);
+
+        // 搬东西是有动静的（拿起很轻）
+        GameEvent.RaiseNoise(held.transform.position, NoiseKind.Pickup);
     }
 
     /// <summary>头前方最合适的可搬动物品。</summary>
@@ -130,9 +133,15 @@ public class DragController : MonoBehaviour
     public void Drop()
     {
         if (held == null) return;
+
+        // 放下的位置先记下来：held 置空之后就取不到了
+        Vector2 dropAt = held.transform.position;
         SetSimulated(held, true);
         held = null;
         if (bug != null) bug.IsDragging = false;
         AudioOverridePlayer.Play(AudioKeys.Drop);
+
+        // 把箱子砸在地上是很响的 —— 「扔给村民听」本身就是玩法
+        GameEvent.RaiseNoise(dropAt, NoiseKind.Drop);
     }
 }

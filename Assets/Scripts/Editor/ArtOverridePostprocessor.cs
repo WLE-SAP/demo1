@@ -10,6 +10,7 @@ using UnityEngine;
 /// 这样不管放进去的图片是 64px 还是 1024px，替换后占的位置都和原素材一致，不需要手改导入设置。
 /// 九宫格 key（屋顶 / 木箱 / 面板…）还会把边框按原素材的比例自动放大到新图片上，
 /// 四角因此不会跟着被拉伸。名字没对上 key 的图片退回通用值：64px = 1 世界单位。
+/// **平铺 key**（草地 / 路面，见 <see cref="ArtOverride.TilingOf"/>）会额外把 Wrap Mode 设成 Repeat。
 /// 已经配置过的图片（meta 里带标记）不再改动，方便手动微调。
 /// </summary>
 public class ArtOverridePostprocessor : AssetPostprocessor
@@ -57,7 +58,9 @@ public class ArtOverridePostprocessor : AssetPostprocessor
         settings.spritePixelsPerUnit = ppu;
         settings.alphaIsTransparency = true;
         settings.mipmapEnabled = false;
-        settings.wrapMode = TextureWrapMode.Clamp;
+        // 平铺素材（草地 / 路面）必须 Repeat，否则平铺时边缘会被拉伸出一道糊边；
+        // 其余素材用 Clamp，免得边缘的透明像素把邻居吸进来
+        settings.wrapMode = known && ArtOverride.TilingOf(key) ? TextureWrapMode.Repeat : TextureWrapMode.Clamp;
 
         // 九宫格 key：把原素材的圆角/边框比例搬到新图片上，四角才不会被拉伸
         if (known && slot.sliced && hasInfo && info.borderRatio > 0.0001f)
@@ -72,6 +75,7 @@ public class ArtOverridePostprocessor : AssetPostprocessor
 
         Debug.Log("[ArtOverride] " + Path.GetFileName(path) + " → key " + (known ? key : "（没对上）")
             + "，按 Sprite 导入，Pixels Per Unit = " + ppu.ToString("0.##")
+            + (known && ArtOverride.TilingOf(key) ? "，平铺（Wrap Mode = Repeat）" : "")
             + (worldWidth > 0.0001f
                 ? "（与原素材等宽：" + worldWidth.ToString("0.##") + " 世界单位）"
                 : "（没有匹配到 key，使用通用值）"));

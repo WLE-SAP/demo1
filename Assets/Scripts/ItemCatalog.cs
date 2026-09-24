@@ -99,6 +99,16 @@ public class ItemDefinition : IContentDefinition
 public static class ItemIds
 {
     public const string Crate = "crate";
+
+    // —— 会引发连锁的东西（见 Spec §4.8）——
+    /// <summary>电线：吃掉 / 腐蚀 / 打碎 → 附近的机器一起断电。</summary>
+    public const string Wire = "wire";
+    /// <summary>抽水泵：断电就停，然后开始漏水（链 A 的第二环）。</summary>
+    public const string Pump = "pump";
+    /// <summary>油桶：被电击 / 被打碎就炸（链 B 的第一环）。</summary>
+    public const string OilBarrel = "oilbarrel";
+    /// <summary>警报器：被电击 / 被炸到就响，全村撤离（链 B 的最后一环）。</summary>
+    public const string Alarm = "alarm";
 }
 
 /// <summary>
@@ -171,6 +181,12 @@ public static class ItemCatalog
         defaultsLoaded = true;
 
         if (Find(ItemIds.Crate) == null) Register(MakeCrate());
+
+        // 会引发连锁的东西（电线 → 断电 → 漏水 → 滑倒；油桶 → 爆炸 → 警报 → 撤离）
+        if (Find(ItemIds.Wire) == null) Register(MakeWire());
+        if (Find(ItemIds.Pump) == null) Register(MakePump());
+        if (Find(ItemIds.OilBarrel) == null) Register(MakeOilBarrel());
+        if (Find(ItemIds.Alarm) == null) Register(MakeAlarm());
 
         Debug.Log("[Content] 可交互物品 " + All.Count + " 种：" + IdList());
     }
@@ -251,7 +267,7 @@ public static class ItemCatalog
 
     // ---------------- 内置物品 ----------------
 
-    /// <summary>木箱：能搬、长到 2 级也能啃（只在村庄区块刷）。</summary>
+    /// <summary>木箱：能搬、长到 2 级也能啃、**还能被打碎**（只在村庄区块刷）。</summary>
     static ItemDefinition MakeCrate()
     {
         return new ItemDefinition
@@ -274,8 +290,143 @@ public static class ItemCatalog
             title = "木箱",
             kind = "道具",
             description = "搬到哪算哪的箱子。站在它前面按 F 就能搬起来，搬运时小虫会变慢；"
-                + "长到 " + BugGrowth.CrateLevel + " 级以后可以直接啃掉。",
-            spawn = new SpawnRule { weight = 1f, clearance = 0.45f, padding = 0.25f, footprint = 0.55f, hamletOnly = true }
+                + "长到 " + BugGrowth.CrateLevel + " 级以后可以直接啃掉，也可以撞碎 / 腐蚀掉。",
+            spawn = new SpawnRule { weight = 1f, clearance = 0.45f, padding = 0.25f, footprint = 0.55f, hamletOnly = true },
+            decorate = go =>
+            {
+                // 木箱也能被打碎（撞 / 电击 / 爆炸 / 腐蚀都算），碎了一地木屑
+                Breakable breakable = go.AddComponent<Breakable>();
+                breakable.hp = 2f;
+                breakable.debrisCount = 8;
+                breakable.debrisColor = new Color(0.62f, 0.45f, 0.26f);
+            }
+        };
+    }
+
+    // ---------------- 会引发连锁的东西 ----------------
+    //
+    // 共同的约定（Spec §4.8）：这些物件都**不能搬**（免得玩家把整条链子搬走）、**都能被打碎**，
+    // 「谁连到谁」按半径就近绑定，不做 id / 连线编辑器。
+
+    /// <summary>电线：长到 2 级可以啃掉它，一啃附近的机器就断电（链 A 的第一环）。</summary>
+    static ItemDefinition MakeWire()
+    {
+        return new ItemDefinition
+        {
+            id = ItemIds.Wire,
+            artKey = ArtKeys.Wire,
+            shape = ArtShape.Rect,
+            sliced = false,
+            sizeMin = 0.55f,
+            sizeMax = 0.75f,
+            color = new Color(0.24f, 0.24f, 0.28f),
+            draggable = false,
+            edible = true,
+            nutrition = 2,
+            requiredLevel = BugGrowth.CrateLevel,
+            satietyMin = 8,
+            satietyMax = 13,
+            hiddenNote = "电线：一股铜腥味",
+            title = "电线",
+            kind = "设施",
+            description = "从谁家墙上牵出来的一截电线。啃断它，附近靠它供电的东西就会停下来。",
+            useYSort = false,
+            spawn = new SpawnRule { weight = 0.9f, clearance = 0.4f, padding = 0.2f, footprint = 0.4f, hamletOnly = true },
+            decorate = go =>
+            {
+                // 吃掉它 = 剪断线路（用 onConsumed，而不是 OnDestroy：区块回收不该断电，红线 22）
+                ElectricWire wire = go.AddComponent<ElectricWire>();
+                Edible edible = go.GetComponent<Edible>();
+                if (edible != null) edible.onConsumed += _ => wire.CutPower();
+            }
+        };
+    }
+
+    /// <summary>抽水泵：通电时正常，**断电就停、管子开始漏水**（链 A 的第二环）。</summary>
+    static ItemDefinition MakePump()
+    {
+        return new ItemDefinition
+        {
+            id = ItemIds.Pump,
+            artKey = ArtKeys.Pump,
+            shape = ArtShape.Rect,
+            sliced = true,
+            sizeMin = 0.9f,
+            sizeMax = 1.1f,
+            color = new Color(0.42f, 0.46f, 0.52f),
+            draggable = false,
+            title = "抽水泵",
+            kind = "设施",
+            description = "嗡嗡作响的抽水泵。要是它停了，接的管子大概就要开始漏水了。",
+            // 故障链 A 是「村里的事故」：泵只在有电线、有人的村庄刷（荒野没电线，泵永远漏不了）
+            spawn = SpawnRule.Fixed(1, 1, 0.55f, 0.9f, 0.6f, 0.9f)
+                .InSettlements(SettlementKind.Village, SettlementKind.City),
+            decorate = go =>
+            {
+                go.AddComponent<Breakable>().hp = 3f;      // 结实一点，得撞好几下才碎
+                PoweredProp prop = go.AddComponent<PoweredProp>();
+                prop.offColor = new Color(0.5f, 0.52f, 0.55f);
+                WaterSource source = go.AddComponent<WaterSource>();
+                source.leakWhenUnpowered = true;
+                source.maxPuddles = 3;
+            }
+        };
+    }
+
+    /// <summary>油桶：被电击 / 被打碎就炸（链 B 的第一环）。</summary>
+    static ItemDefinition MakeOilBarrel()
+    {
+        return new ItemDefinition
+        {
+            id = ItemIds.OilBarrel,
+            artKey = ArtKeys.OilBarrel,
+            shape = ArtShape.Rect,
+            sliced = true,
+            sizeMin = 0.75f,
+            sizeMax = 0.9f,
+            color = new Color(0.62f, 0.32f, 0.20f),
+            draggable = false,
+            title = "油桶",
+            kind = "危险品",
+            description = "一股油味。要是被电到，或者被撞破…你就知道为什么没人敢碰它了。",
+            spawn = new SpawnRule { weight = 0.5f, clearance = 0.6f, padding = 0.4f, footprint = 0.7f, hamletOnly = true },
+            decorate = go =>
+            {
+                Breakable breakable = go.AddComponent<Breakable>();
+                breakable.hp = 1f;
+                breakable.debrisColor = new Color(0.55f, 0.3f, 0.2f);
+                Explosive explosive = go.AddComponent<Explosive>();
+                // 被打碎 / 被腐蚀 → 炸（Breakable.Break 会把控制权交给 Explosive）
+                Edible edible = go.GetComponent<Edible>();   // 油桶不能吃，这里只是留个口子
+                if (edible != null) edible.onConsumed += _ => explosive.Detonate();
+            }
+        };
+    }
+
+    /// <summary>警报器：被电击 / 被炸到就响，全村撤离（链 B 的最后一环）。</summary>
+    static ItemDefinition MakeAlarm()
+    {
+        return new ItemDefinition
+        {
+            id = ItemIds.Alarm,
+            artKey = ArtKeys.Alarm,
+            shape = ArtShape.Round,
+            sliced = false,
+            sizeMin = 0.5f,
+            sizeMax = 0.6f,
+            color = new Color(0.86f, 0.82f, 0.7f),
+            draggable = false,
+            title = "警报器",
+            kind = "设施",
+            description = "挂在杆子上的喇叭。一旦响起来，整个村子的人都往外跑。",
+            // 和泵一样：警报是「村里的事故」，荒野里不该出现
+            spawn = SpawnRule.Fixed(1, 1, 0.4f, 0.8f, 0.6f, 0.8f)
+                .InSettlements(SettlementKind.Village, SettlementKind.City),
+            decorate = go =>
+            {
+                go.AddComponent<Breakable>().hp = 2f;
+                go.AddComponent<Alarm>();
+            }
         };
     }
 }

@@ -88,6 +88,43 @@ public static class VillagerJobs
         }
     }
 
+    /// <summary>
+    /// 好奇（警觉）程度：决定「听得见多远的动静」（半径乘这个倍率）、以及「会不会亲自去看」。
+    /// 守卫最警觉、孩子最好奇；农夫和铁匠只顾干活；长者听见了也只是抬头看看。
+    /// 低于 <see cref="Villager.leavePostThreshold"/> 的职业听到动静只会原地起疑，不离开岗位。
+    /// </summary>
+    public static float Curiosity(VillagerJob job)
+    {
+        switch (job)
+        {
+            case VillagerJob.Guard: return 1.6f;        // 巡逻的人：最警觉
+            case VillagerJob.Child: return 1.5f;        // 孩子：什么都想凑过去看
+            case VillagerJob.Woodcutter: return 1.2f;   // 在林子里干活，耳朵灵
+            case VillagerJob.Merchant: return 1.0f;     // 护着摊子，会去看看
+            case VillagerJob.Baker: return 1.0f;
+            case VillagerJob.Shepherd: return 1.0f;
+            case VillagerJob.Elder: return 0.8f;        // 上了年纪，听见了只是抬头
+            case VillagerJob.Farmer: return 0.6f;       // 地里的活要紧
+            default: return 0.5f;                       // 铁匠：最懒得管
+        }
+    }
+
+    /// <summary>听到动静、走过去查看时在做什么（悬浮窗 / HUD 显示用）。</summary>
+    public static string InvestigateText(VillagerJob job)
+    {
+        switch (job)
+        {
+            case VillagerJob.Guard: return "警惕地四处查看";
+            case VillagerJob.Child: return "好奇地东张西望";
+            case VillagerJob.Woodcutter: return "拎着家伙在找";
+            case VillagerJob.Merchant: return "护着摊子张望";
+            case VillagerJob.Baker: return "扒着门框往外看";
+            case VillagerJob.Shepherd: return "站在圈边张望";
+            case VillagerJob.Elder: return "费力地抬头看";
+            default: return "放下手里的活看了两眼";
+        }
+    }
+
     /// <summary>悬浮窗里给村民的一段介绍（按职业）。</summary>
     public static string Intro(VillagerJob job)
     {

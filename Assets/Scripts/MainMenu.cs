@@ -7,8 +7,10 @@ using UnityEngine.UI;
 /// <summary>
 /// 开始界面：
 /// <list type="bullet">
-/// <item>「开始游戏」先弹地图选择（荒野 / 农村 / 城市，区别是 npc 有多少），选完才进游戏；</item>
-/// <item>「继续游戏」读上次的存档（含存档里记下的地图类型），没有存档就点不了；</item>
+/// <item>「开始游戏」**直接开局**（2026-09-25 起不再先选地图 —— 世界每次都是一整片新的随机地图，
+///       地貌与聚落由种子决定，见 <see cref="WorldBiome"/>）；</item>
+/// <item>「继续游戏」读上次的存档，按钮上会写出存档所在地貌（例如「继续游戏（森林 · 农村）」），
+///       没有存档就点不了；</item>
 /// <item>「游戏设置」里放分辨率、屏幕模式与音量（音量是全局主音量，写 PlayerPrefs）。</item>
 /// </list>
 /// </summary>
@@ -36,13 +38,6 @@ public class MainMenu : MonoBehaviour
     public Button volumeUpButton;
     public Button settingsBackButton;
 
-    [Header("地图选择面板")]
-    public GameObject mapPanel;
-    public Button wildernessButton;
-    public Button villageButton;
-    public Button cityButton;
-    public Button mapBackButton;
-
     [Header("分辨率")]
     public int minWidth = 800;
     public int minHeight = 600;
@@ -61,7 +56,7 @@ public class MainMenu : MonoBehaviour
         LoadSaved();
         WireButtons();
         GameSettings.Apply();
-        ShowMainPanel();     // 打开时只显示主面板（设置 / 地图面板先收起来）
+        ShowMainPanel();     // 打开时只显示主面板（设置面板先收起来）
         // 启动时就把上次保存的分辨率/屏幕模式应用上，避免显示与实际不一致
         Apply();
     }
@@ -98,8 +93,8 @@ public class MainMenu : MonoBehaviour
 
     void WireButtons()
     {
-        // 主面板
-        Bind(startButton, OpenMapPanel);
+        // 主面板：开始游戏直接开局（世界是随机生成的，不再先选地图）
+        Bind(startButton, StartGame);
         Bind(continueButton, ContinueGame);
         Bind(settingsButton, OpenSettings);
 
@@ -110,12 +105,6 @@ public class MainMenu : MonoBehaviour
         Bind(volumeDownButton, () => StepVolume(-GameSettings.VolumeStep));
         Bind(volumeUpButton, () => StepVolume(GameSettings.VolumeStep));
         Bind(settingsBackButton, ShowMainPanel);
-
-        // 地图选择
-        Bind(wildernessButton, () => StartGame(MapKind.Wilderness));
-        Bind(villageButton, () => StartGame(MapKind.Village));
-        Bind(cityButton, () => StartGame(MapKind.City));
-        Bind(mapBackButton, ShowMainPanel);
 
         RefreshContinueButton();
     }
@@ -133,11 +122,10 @@ public class MainMenu : MonoBehaviour
 
     // ---------------- 面板切换 ----------------
 
-    /// <summary>回到主面板（关掉设置 / 地图选择）。</summary>
+    /// <summary>回到主面板（关掉设置）。</summary>
     public void ShowMainPanel()
     {
         if (settingsPanel != null) settingsPanel.SetActive(false);
-        if (mapPanel != null) mapPanel.SetActive(false);
         if (mainPanel != null) mainPanel.SetActive(true);
         RefreshLabels();
     }
@@ -146,20 +134,11 @@ public class MainMenu : MonoBehaviour
     public void OpenSettings()
     {
         if (mainPanel != null) mainPanel.SetActive(false);
-        if (mapPanel != null) mapPanel.SetActive(false);
         if (settingsPanel != null) settingsPanel.SetActive(true);
         RefreshLabels();
     }
 
-    /// <summary>「开始游戏」：先让玩家选地图，选完才真正开局。</summary>
-    public void OpenMapPanel()
-    {
-        if (mainPanel != null) mainPanel.SetActive(false);
-        if (settingsPanel != null) settingsPanel.SetActive(false);
-        if (mapPanel != null) mapPanel.SetActive(true);
-    }
-
-    /// <summary>有存档才让点「继续游戏」，并把存档里的地图类型写在按钮上。</summary>
+    /// <summary>有存档才让点「继续游戏」，并把存档所在地貌写在按钮上。</summary>
     void RefreshContinueButton()
     {
         if (continueButton == null) return;
@@ -171,7 +150,8 @@ public class MainMenu : MonoBehaviour
         if (continueLabel == null) return;
         if (hasSave)
         {
-            continueLabel.text = "继续游戏（" + MapProfiles.Label(save.ResolvedMapKind) + "）";
+            string biome = save.BiomeText;
+            continueLabel.text = string.IsNullOrEmpty(biome) ? "继续游戏" : "继续游戏（" + biome + "）";
             continueLabel.color = Color.white;
         }
         else
@@ -234,18 +214,17 @@ public class MainMenu : MonoBehaviour
     // ---------------- 开局 ----------------
 
     /// <summary>
-    /// 选了地图后真正开局：记下地图类型（世界按它生成、存档也带上它），
-    /// 新开一局会换一个新的世界种子（存档在进入游戏后马上被覆盖）。
+    /// 开始新的一局：直接进游戏场景。**世界是随机生成的**（地貌 / 聚落由新的世界种子决定），
+    /// 不再有「先选荒野 / 农村 / 城市」这一步。
     /// </summary>
-    public void StartGame(MapKind kind)
+    public void StartGame()
     {
-        MapProfiles.Current = kind;
         Apply();
         SaveSystem.ContinueRequested = false;
         SceneManager.LoadScene(gameSceneName);
     }
 
-    /// <summary>读档继续上次的局面（地图类型用存档里记的那张）。</summary>
+    /// <summary>读档继续上次的局面（世界用存档里的种子重建）。</summary>
     public void ContinueGame()
     {
         Apply();

@@ -26,6 +26,8 @@ public class AutoSave : MonoBehaviour
     public VillageWorld world;
     public BugVitality vitality;
     public BugGrowth growth;
+    [Tooltip("能力栏（留空自动找；小虫身上由 AbilitySet 自动挂上）")]
+    public AbilitySet abilities;
 
     /// <summary>最近一次存档的时间（Time.time），HUD 用来显示「已保存」。</summary>
     public float LastSaveTime { get; private set; }
@@ -44,6 +46,20 @@ public class AutoSave : MonoBehaviour
         if (world == null) world = FindObjectOfType<VillageWorld>();
         if (vitality == null) vitality = FindObjectOfType<BugVitality>();
         if (growth == null) growth = FindObjectOfType<BugGrowth>();
+    }
+
+    /// <summary>
+    /// 能力栏：**必须惰性查找**，不能只在 <see cref="Awake"/> 里取一次 ——
+    /// <see cref="AbilitySet"/> 是场景加载完成后（RuntimeInitializeOnLoadMethod)才挂到小虫身上的，
+    /// 那时候 AutoSave.Awake 早就跑过了，取到的是 null（能力就永远存不进去）。
+    /// </summary>
+    AbilitySet AbilityBar
+    {
+        get
+        {
+            if (abilities == null) abilities = FindObjectOfType<AbilitySet>();
+            return abilities;
+        }
     }
 
     void Start()
@@ -97,11 +113,11 @@ public class AutoSave : MonoBehaviour
             return;
         }
 
-        // 1) 先用存档里的地图类型与种子重建世界（含出生点附近）；位置以存档为准，不要再把小虫放回出生点
+        // 1) 先用存档里的世界种子重建世界（含出生点附近）；位置以存档为准，不要再把小虫放回出生点
         if (world != null)
         {
             if (world.builder != null) world.builder.placePlayerOnFirstChunk = false;
-            world.LoadWorld(save.worldSeed, save.ResolvedMapKind);
+            world.LoadWorld(save.worldSeed);
         }
 
         // 2) 再把小虫放回原位
@@ -116,14 +132,26 @@ public class AutoSave : MonoBehaviour
         }
         if (world != null) world.Stream(true);       // 按新位置补齐区块
 
-        // 3) 恢复计数、体力、成长与时间
+        // 3) 恢复计数、体力、成长、能力与时间
         if (eat != null) eat.RestoreEatenCount(save.eaten);
         if (growth != null) growth.SetLevel(save.growthLevel);
+        if (AbilityBar != null) AbilityBar.Restore(save.abilityMask, save.abilityCharges);
+
+        // 4 版：混乱 / 警觉 / 任务 / 本局统计
+        ChaosMeter chaos = ChaosMeter.Instance;
+        if (chaos != null) chaos.Restore(save.chaos);
+        Alertness alert = Alertness.Instance;
+        if (alert != null) alert.Restore(save.alert);
+        RunStats stats = RunStats.Instance;
+        if (stats != null) stats.Restore(save.statBroken, save.statEaten, save.statSpotted,
+            save.statSlips, save.statAbilityUses, save.statLongestChain);
+
         if (vitality != null) vitality.Restore(save.stamina > 0.01f ? save.stamina : vitality.maxStamina * 0.6f);
         if (clock != null) clock.RestoreHours(save.clockHours);
         PlaySeconds = save.playSeconds;
 
-        Debug.Log("[Save] 已读取存档：" + save.savedAt + " 地图=" + MapProfiles.Label(save.ResolvedMapKind)
+        Debug.Log("[Save] 已读取存档：" + save.savedAt
+            + (string.IsNullOrEmpty(save.BiomeText) ? "" : " 地貌=" + save.BiomeText)
             + " 种子=" + save.worldSeed
             + " 位置=(" + save.playerX.ToString("F1") + "," + save.playerY.ToString("F1") + ") 已吃=" + save.eaten
             + " 体力=" + save.stamina.ToString("F0") + " 成长=" + save.growthLevel + "级");
@@ -136,7 +164,12 @@ public class AutoSave : MonoBehaviour
 
         GameSave save = new GameSave();
         save.worldSeed = world != null ? world.worldSeed : 0;
-        save.mapKind = (int)(world != null ? world.mapKind : MapProfiles.Current);
+        // 6 版：记下存档时小虫所在的地貌与聚落（只给「继续游戏」按钮显示用，见 GameSave.BiomeText）
+        if (world != null)
+        {
+            save.natureKind = (int)world.CurrentNature;
+            save.settlementKind = (int)world.CurrentSettlement;
+        }
         save.playerX = bug.transform.position.x;
         save.playerY = bug.transform.position.y;
         save.eaten = eat != null ? eat.EatenCount : 0;
@@ -144,6 +177,23 @@ public class AutoSave : MonoBehaviour
         save.growthLevel = growth != null ? growth.level : 0;
         save.clockHours = clock != null ? clock.TotalHours : 7f;
         save.playSeconds = PlaySeconds;
+        AbilitySet set = AbilityBar;
+        save.abilityMask = set != null ? set.SaveMask() : 0;
+        // 老档没有这个字段；新档一定写成完整长度（空数组会让读档方在索引时越界）
+        save.abilityCharges = set != null ? set.SaveCharges() : new int[Abilities.Count];
+
+        // 4 版：混乱 / 警觉 / 任务 / 本局统计（都是「本局进度」，读档继续时不该从零开始）
+        ChaosMeter chaos = ChaosMeter.Instance;
+        save.chaos = chaos != null ? chaos.chaos : 0f;
+        Alertness alert = Alertness.Instance;
+        save.alert = alert != null ? alert.alert : 0f;
+        RunStats stats = RunStats.Instance;
+        save.statBroken = stats != null ? stats.Broken : 0;
+        save.statEaten = stats != null ? stats.Eaten : 0;
+        save.statSpotted = stats != null ? stats.Spotted : 0;
+        save.statSlips = stats != null ? stats.Slips : 0;
+        save.statAbilityUses = stats != null ? stats.AbilityUses : 0;
+        save.statLongestChain = stats != null ? stats.LongestChain : 0;
 
         if (!SaveSystem.Save(save)) return;
         LastSaveTime = Time.time;

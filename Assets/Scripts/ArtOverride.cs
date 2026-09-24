@@ -40,11 +40,18 @@ public static class ArtOverride
         /// <summary>是否按九宫格（Sliced）使用：导入时会把边框按原素材的比例放大到新图片上。</summary>
         public readonly bool sliced;
 
-        public Slot(string source, bool tint = false, bool sliced = false)
+        /// <summary>
+        /// 是不是**平铺**素材（地面 / 路面）。导入时会把 Wrap Mode 设成 <c>Repeat</c>，
+        /// 否则平铺时边缘会被拉伸出一道糊边（2026-09-25 修）。
+        /// </summary>
+        public readonly bool tiling;
+
+        public Slot(string source, bool tint = false, bool sliced = false, bool tiling = false)
         {
             this.source = source;
             this.tint = tint;
             this.sliced = sliced;
+            this.tiling = tiling;
         }
     }
 
@@ -60,9 +67,13 @@ public static class ArtOverride
         { ArtKeys.Highlight,      new Slot("S_Disc") },
         { ArtKeys.HighlightRect,  new Slot("S_RoundRect", false, true) },
 
-        // —— 地面 ——
-        { ArtKeys.Ground,         new Slot("T_Grass") },
-        { ArtKeys.Road,           new Slot("T_Road") },
+        // —— 地面与道路（都是**平铺**素材，必须无缝接得上）——
+        { ArtKeys.Ground,         new Slot("T_Grass", false, false, true) },
+        { ArtKeys.Road,           new Slot("T_Road", false, false, true) },
+        { ArtKeys.GroundForest,   new Slot("T_Grass", false, false, true) },
+        { ArtKeys.GroundDesert,   new Slot("T_Road", false, false, true) },
+        { ArtKeys.RoadDirt,       new Slot("T_Road", false, false, true) },
+        { ArtKeys.RoadPaved,      new Slot("T_Road", false, false, true) },
 
         // —— 房屋与商店 ——
         { ArtKeys.HouseRoof,      new Slot("S_Rect", false, true) },
@@ -74,6 +85,25 @@ public static class ArtOverride
         { ArtKeys.Anvil,          new Slot("S_Rect") },
         { ArtKeys.Forge,          new Slot("S_Disc") },
 
+        // —— 不同聚落的房型（房子随聚落换样子：农村农舍 / 两层小楼 / 谷仓，城市排屋 / 公寓，荒野木屋）——
+        { ArtKeys.HouseUpperWall, new Slot("S_Rect", false, true) },
+        { ArtKeys.ApartmentRoof,  new Slot("S_Rect", false, true) },
+        { ArtKeys.ApartmentWindow, new Slot("S_Rect", false, true) },
+        { ArtKeys.BarnRoof,       new Slot("S_Rect", false, true) },
+        { ArtKeys.BarnDoor,       new Slot("S_Rect", false, true) },
+        { ArtKeys.CabinWall,      new Slot("S_Rect", false, true) },
+        { ArtKeys.CabinRoof,      new Slot("S_Rect", false, true) },
+
+        // —— 聚落特有的地标（风车 / 钟楼 / 喷泉 / 篝火）——
+        { ArtKeys.WindmillBody,   new Slot("S_Rect", false, true) },
+        { ArtKeys.WindmillBlade,  new Slot("S_Rect") },
+        { ArtKeys.BellTower,      new Slot("S_Rect", false, true) },
+        { ArtKeys.Bell,           new Slot("S_Disc") },
+        { ArtKeys.FountainRim,    new Slot("S_Disc") },
+        { ArtKeys.FountainWater,  new Slot("S_Disc") },
+        { ArtKeys.CampfireStone,  new Slot("S_Disc") },
+        { ArtKeys.CampfireFire,   new Slot("S_Disc") },
+
         // —— 村民（颜色 = 职业 / 肤色，所以保留染色）——
         { ArtKeys.VillagerBody,   new Slot("S_Rect", true) },
         { ArtKeys.VillagerHead,   new Slot("S_Disc", true) },
@@ -83,6 +113,29 @@ public static class ArtOverride
         { ArtKeys.Berry,          new Slot("S_FoodBerry") },
         { ArtKeys.Leaf,           new Slot("S_FoodLeaf") },
         { ArtKeys.SpecialFood,    new Slot("S_Disc") },
+
+        // —— 按自然体系换的景物（草原灌木 / 森林灌木 / 沙漠仙人掌、枯树、绿洲棕榈）——
+        { ArtKeys.Bush,           new Slot("S_Bush") },
+        { ArtKeys.CactusBody,     new Slot("S_Rect") },
+        { ArtKeys.CactusArm,      new Slot("S_Rect") },
+        { ArtKeys.DeadTree,       new Slot("S_Rect") },
+        { ArtKeys.OasisWater,     new Slot("S_Disc") },
+        { ArtKeys.PalmTrunk,      new Slot("S_Rect") },
+        { ArtKeys.PalmLeaf,       new Slot("S_Disc") },
+
+        // —— 按自然体系换的食物（森林蘑菇 / 松果，沙漠仙人掌果，草原麦穗）——
+        { ArtKeys.Mushroom,       new Slot("S_Disc") },
+        { ArtKeys.Pinecone,       new Slot("S_Disc") },
+        { ArtKeys.CactusFruit,    new Slot("S_Disc") },
+        { ArtKeys.Wheat,          new Slot("S_FoodLeaf") },
+
+        // —— 按聚落 / 自然换的可交互物（岩石、草垛、木料、垃圾桶、木桶、灯笼）——
+        { ArtKeys.Rock,           new Slot("S_Rock") },
+        { ArtKeys.HayBale,        new Slot("S_Rect", false, true) },
+        { ArtKeys.Log,            new Slot("S_Rect", false, true) },
+        { ArtKeys.TrashCan,       new Slot("S_Rect", false, true) },
+        { ArtKeys.Bucket,         new Slot("S_Rect", false, true) },
+        { ArtKeys.Lantern,        new Slot("S_Disc") },
 
         // —— 农田 / 牧场 / 花坛 ——
         { ArtKeys.FarmSoil,       new Slot("S_Rect", false, true) },
@@ -118,6 +171,24 @@ public static class ArtOverride
         { ArtKeys.BurrowInner,    new Slot("S_Disc") },
         { ArtKeys.BurrowStone,    new Slot("S_Disc") },
         { ArtKeys.Crate,          new Slot("S_Rect", false, true) },
+
+        // —— 能赋予能力的食物（吃掉解锁对应能力）——
+        { ArtKeys.Battery,        new Slot("S_Rect") },
+        { ArtKeys.Trash,          new Slot("S_Disc") },
+        { ArtKeys.Spore,          new Slot("S_Disc") },
+        { ArtKeys.Gear,           new Slot("S_Disc") },
+        { ArtKeys.Acid,           new Slot("S_Disc") },
+
+        // —— 会引发连锁的设施（电线 / 抽水泵 / 油桶 / 警报器）——
+        { ArtKeys.Wire,           new Slot("S_Rect") },
+        { ArtKeys.Pump,           new Slot("S_Rect", false, true) },
+        { ArtKeys.OilBarrel,      new Slot("S_Rect", false, true) },
+        { ArtKeys.Alarm,          new Slot("S_Disc") },
+
+        // —— 发电站（电池聚在它旁边）——
+        { ArtKeys.PowerPlant,     new Slot("S_Rect", false, true) },
+        { ArtKeys.PowerCoil,      new Slot("S_Disc") },
+        { ArtKeys.PowerPole,      new Slot("S_Rect") },
 
         // —— 开始界面（颜色沿用界面配色，所以保留染色）——
         { ArtKeys.MenuBackground, new Slot("T_Grass") },
@@ -219,6 +290,13 @@ public static class ArtOverride
         return Slots.TryGetValue(key, out slot) && slot.tint;
     }
 
+    /// <summary>这个 key 是不是平铺素材（导入时要把 Wrap Mode 设成 Repeat）。</summary>
+    public static bool TilingOf(string key)
+    {
+        Slot slot;
+        return Slots.TryGetValue(key, out slot) && slot.tiling;
+    }
+
     /// <summary>把场景里所有 <see cref="ArtSlot"/>（含未激活对象）套用一遍，返回被替换的渲染器数量。</summary>
     public static int ApplyAll()
     {
@@ -309,9 +387,17 @@ public static class ArtKeys
     public const string Highlight = "highlight";
     public const string HighlightRect = "highlight_rect";
 
-    // 地面
+    // 地面（都是平铺素材）
     public const string Ground = "ground";
     public const string Road = "road";
+    /// <summary>森林地貌的地面（草原直接用 <see cref="Ground"/>）。</summary>
+    public const string GroundForest = "ground_forest";
+    /// <summary>沙漠地貌的地面。</summary>
+    public const string GroundDesert = "ground_desert";
+    /// <summary>荒野的土路。</summary>
+    public const string RoadDirt = "road_dirt";
+    /// <summary>城市的石铺路。</summary>
+    public const string RoadPaved = "road_paved";
 
     // 房屋与商店
     public const string HouseRoof = "house_roof";
@@ -322,6 +408,80 @@ public static class ArtKeys
     public const string ShopSign = "shop_sign";
     public const string Anvil = "anvil";
     public const string Forge = "forge";
+
+    // 房型（两层小楼 / 公寓 / 谷仓 / 木屋）
+    /// <summary>两层小楼与排屋、公寓的**上层墙体**（下层用 <see cref="HouseWall"/>）。</summary>
+    public const string HouseUpperWall = "house_upper_wall";
+    /// <summary>公寓的平屋顶。</summary>
+    public const string ApartmentRoof = "apartment_roof";
+    /// <summary>公寓的窗（比 <see cref="HouseWindow"/> 小、成排）。</summary>
+    public const string ApartmentWindow = "apartment_window";
+    /// <summary>谷仓的高屋顶。</summary>
+    public const string BarnRoof = "barn_roof";
+    /// <summary>谷仓的双开大门。</summary>
+    public const string BarnDoor = "barn_door";
+    /// <summary>木屋的圆木墙。</summary>
+    public const string CabinWall = "cabin_wall";
+    /// <summary>木屋的屋顶。</summary>
+    public const string CabinRoof = "cabin_roof";
+
+    // 聚落地标
+    /// <summary>风车的塔身。</summary>
+    public const string WindmillBody = "windmill_body";
+    /// <summary>风车的叶片（四片共用，会旋转）。</summary>
+    public const string WindmillBlade = "windmill_blade";
+    /// <summary>钟楼的塔身（含顶）。</summary>
+    public const string BellTower = "bell_tower";
+    /// <summary>钟楼里的钟。</summary>
+    public const string Bell = "bell";
+    /// <summary>喷泉的池边。</summary>
+    public const string FountainRim = "fountain_rim";
+    /// <summary>喷泉的水面（中央水柱也用它）。</summary>
+    public const string FountainWater = "fountain_water";
+    /// <summary>篝火的石头圈。</summary>
+    public const string CampfireStone = "campfire_stone";
+    /// <summary>篝火的火苗（夜里亮、会闪）。</summary>
+    public const string CampfireFire = "campfire_fire";
+
+    // 自然景物（按自然体系换）
+    /// <summary>灌木（草原 / 森林）。</summary>
+    public const string Bush = "bush";
+    /// <summary>仙人掌的主干（沙漠）。</summary>
+    public const string CactusBody = "cactus_body";
+    /// <summary>仙人掌的侧枝。</summary>
+    public const string CactusArm = "cactus_arm";
+    /// <summary>枯树（沙漠）。</summary>
+    public const string DeadTree = "dead_tree";
+    /// <summary>绿洲的水面（沙漠里的稀有景点）。</summary>
+    public const string OasisWater = "oasis_water";
+    /// <summary>棕榈树干（绿洲旁）。</summary>
+    public const string PalmTrunk = "palm_trunk";
+    /// <summary>棕榈树叶。</summary>
+    public const string PalmLeaf = "palm_leaf";
+
+    // 按自然体系换的食物
+    /// <summary>蘑菇（森林）。</summary>
+    public const string Mushroom = "mushroom";
+    /// <summary>松果（森林）。</summary>
+    public const string Pinecone = "pinecone";
+    /// <summary>仙人掌果（沙漠）。</summary>
+    public const string CactusFruit = "cactus_fruit";
+    /// <summary>麦穗（草原）。</summary>
+    public const string Wheat = "wheat";
+
+    // 按聚落 / 自然换的可交互物
+    /// <summary>岩石（沙漠 / 草原，能搬能砸）。</summary>
+    public const string Rock = "rock";
+    /// <summary>草垛（草原，能搬能吃）。</summary>
+    public const string HayBale = "hay_bale";
+    /// <summary>木料堆（森林，能搬能吃）。</summary>
+    public const string Log = "log";
+    /// <summary>垃圾桶（城市，能搬能吃）。</summary>
+    public const string TrashCan = "trash_can";
+    /// <summary>木桶（村庄 / 城市，能搬能吃）。</summary>
+    public const string Bucket = "bucket";
+    /// <summary>灯笼（村庄 / 城市，能搬，夜里发亮）。</summary>
+    public const string Lantern = "lantern";
 
     // 村民
     public const string VillagerBody = "villager_body";
@@ -367,6 +527,24 @@ public static class ArtKeys
     public const string BurrowInner = "burrow_inner";
     public const string BurrowStone = "burrow_stone";
     public const string Crate = "crate";
+
+    // 能赋予能力的食物（吃掉解锁对应能力，见 AbilityId）
+    public const string Battery = "battery";
+    public const string Trash = "trash";
+    public const string Spore = "spore";
+    public const string Gear = "gear";
+    public const string Acid = "acid";
+
+    // 发电站（电池聚在它旁边）
+    public const string PowerPlant = "power_plant";
+    public const string PowerCoil = "power_coil";
+    public const string PowerPole = "power_pole";
+
+    // 会引发连锁的设施
+    public const string Wire = "wire";
+    public const string Pump = "pump";
+    public const string OilBarrel = "oilbarrel";
+    public const string Alarm = "alarm";
 
     // 开始界面
     public const string MenuBackground = "menu_background";

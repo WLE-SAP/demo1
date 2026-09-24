@@ -19,6 +19,8 @@ public class NightGlow : MonoBehaviour
     SpriteRenderer sprite;
     Vector3 baseScale;
     VillageClock clock;
+    /// <summary>闪到什么时候（电击 / 抖动期间灯会乱闪）。</summary>
+    float flickerUntil;
 
     void Awake()
     {
@@ -33,10 +35,35 @@ public class NightGlow : MonoBehaviour
         Apply(clock != null ? clock.Night01 : 0f);
     }
 
+    /// <summary>
+    /// 闪一下（电击 / 抖动时用）：<paramref name="seconds"/> 秒内颜色在「亮」和「灭」之间乱跳，
+    /// 结束后自动回到按昼夜算出来的颜色。多次调用取更长的那次。
+    /// </summary>
+    public void Flicker(float seconds)
+    {
+        flickerUntil = Mathf.Max(flickerUntil, Time.time + Mathf.Max(0.05f, seconds));
+    }
+
+    /// <summary>现在是不是正在闪（验证用）。</summary>
+    public bool IsFlickering { get { return Time.time < flickerUntil; } }
+
     void Apply(float night)
     {
         if (sprite == null) return;
-        sprite.color = Color.Lerp(dayColor, nightColor, night);
+
+        Color color = Color.Lerp(dayColor, nightColor, night);
+
+        if (Time.time < flickerUntil)
+        {
+            // 正弦 + 柏林噪声：不是规律地闪，看起来才像「电路出问题了」
+            float wave = Mathf.Sin(Time.time * 57f) * 0.5f + 0.5f;
+            float noise = Mathf.PerlinNoise(Time.time * 33f, 0.37f);
+            float on = Mathf.Clamp01(wave * 0.7f + noise * 0.3f);
+            Color lit = new Color(1f, 0.98f, 0.86f, Mathf.Max(color.a, 0.85f));
+            color = Color.Lerp(color, lit, on);
+        }
+
+        sprite.color = color;
         if (!Mathf.Approximately(nightScale, 1f))
             transform.localScale = baseScale * Mathf.Lerp(1f, nightScale, night);
     }

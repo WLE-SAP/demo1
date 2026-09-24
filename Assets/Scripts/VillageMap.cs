@@ -19,6 +19,12 @@ public class VillageMap : MonoBehaviour
     public readonly List<Vector2> houses = new List<Vector2>();
     public readonly List<Vector2> roads = new List<Vector2>();
 
+    /// <summary>
+    /// 按「设施种类」记的锚点（2026-09-25 加）：物品的「就近生成」靠它
+    /// —— 电池聚在发电站（`"power"`）旁边就是这么实现的。种类名用 <see cref="AddAnchor"/> 写入。
+    /// </summary>
+    public readonly Dictionary<string, List<Vector2>> anchors = new Dictionary<string, List<Vector2>>();
+
     /// <summary>面包房门口（可能为 null，表示附近没有）。</summary>
     public bool hasBakery;
     public Vector2 bakery;
@@ -34,7 +40,30 @@ public class VillageMap : MonoBehaviour
         farms.Clear(); gardens.Clear(); stalls.Clear(); pens.Clear();
         benches.Clear(); lamps.Clear(); wells.Clear(); trees.Clear();
         houses.Clear(); roads.Clear();
+        anchors.Clear();
         hasBakery = hasSmithy = hasBoard = false;
+    }
+
+    /// <summary>登记一个「某类设施在哪」的锚点（物品的就近生成会来查）。</summary>
+    public void AddAnchor(string kind, Vector2 point)
+    {
+        if (string.IsNullOrEmpty(kind)) return;
+
+        List<Vector2> list;
+        if (!anchors.TryGetValue(kind, out list))
+        {
+            list = new List<Vector2>();
+            anchors[kind] = list;
+        }
+        list.Add(point);
+    }
+
+    /// <summary>取某类设施的锚点表；没有就返回 null。</summary>
+    public List<Vector2> AnchorList(string kind)
+    {
+        if (string.IsNullOrEmpty(kind)) return null;
+        List<Vector2> list;
+        return anchors.TryGetValue(kind, out list) ? list : null;
     }
 
     /// <summary>剪掉离 center 超过 radius 的锚点（区块回收时调用）。</summary>
@@ -51,6 +80,9 @@ public class VillageMap : MonoBehaviour
         Prune(trees, center, sqr);
         Prune(houses, center, sqr);
         Prune(roads, center, sqr);
+
+        foreach (KeyValuePair<string, List<Vector2>> pair in anchors)
+            Prune(pair.Value, center, sqr);
     }
 
     static void Prune(List<Vector2> list, Vector2 center, float sqrRadius)

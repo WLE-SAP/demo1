@@ -37,7 +37,8 @@
 | 色彩空间 | sRGB，8 位/通道 | 不要做 HDR / 线性空间转换 |
 | 单张尺寸 | 任意分辨率，**最大 2048×2048** | 超过会爆显存、拖慢加载 |
 | 单文件体积 | 建议 < 2 MB | 贴图都进内存 |
-| 命名 | 只用**英文小写 + 数字 + 下划线**，如 `house_roof.png`；**一个 key 只放一张** | 中文/空格文件名的匹配容易出岔子 |
+| 命名 | 只用**英文小写 + 数字 + 下划线**，如 `house_roof.png`；**一个 key 可以放多张 = 变体**（结尾数字区分：`tree1.png` / `tree2.png`…） | 中文/空格文件名的匹配容易出岔子 |
+| 改名容错 | 文件名比较时**忽略大小写、下划线、短横线、空格**（`HouseRoof.png` = `house_roof.png`）；结尾的数字会自动忽略（`windmill1.png` 当成 `windmill`）；另外 `Assets/Scripts/ArtOverride.cs` 的 `Aliases` 别名表里有一小份「非正式名字 → key」的映射（如 `house1.png` → `house_apartment`、`stone3.png` → `rock_large`、`path2.png` → `road_straight_h`） | 不是正式 key 的名字会被点名列在 Console 里（`没对上 key（名字写错了？）`），别名表只是兜底 —— **能改成正式 key 就改** |
 | 建议像素密度 | **64 像素 = 1 世界单位**（直接按这个画最省事） | 和项目自带素材一致 |
 
 ### 1.2 要哪些图（一物一图，按 key 对照）
@@ -47,6 +48,21 @@
 （这是与早期「一份 `disc.png` 换遍树冠 + 村民头 + 羊 + 路灯」最大的区别）。
 
 「九宫格」= 会按物体大小拉伸、四角不跟着变形（导入时自动把边框按原素材圆角比例放大到你的图上）。
+
+**「变体」：同一个 key 放多张图**（2026-09-25 加）
+文件名**结尾的数字就是变体号**（`tree1.png`～`tree4.png` = 同一个 `tree` 的 4 个变体），
+程序按数字从小到大排、运行时自己挑：一片树林里 4 种树会混着长，石头有灰有土黄。
+哪片地貌偏多哪一张由代码里的权重表决定（树见 `VillageGenerator.TreeVariantWeights`）。
+只放一张 = 全场都用这一张（和以前一样），**放几张不会再被当成「重名报错」**。
+
+**「整图素材」：不用把物体铺满画布**（下面标了 ⭐ 的 key）
+导入时**自动按不透明内容裁掉透明边**，运行时按内容比例装进占地、**底边贴地**
+（和「整栋建筑」同一套摆法）。所以把物体画在 128×128 画布正中也不会被缩小，
+更不会出现「影子 / 占地圈比物体大一圈」。目前是：
+`tree` ⭐、`bush` ⭐、`rock_small` ⭐ / `rock_medium` ⭐ / `rock_large` ⭐ / `rock_huge` ⭐、
+`villager` ⭐（整身村民）、`castle` ⭐、`house_extra` ⭐、
+以及八个「整栋建筑」key（`house_cottage` / `house_two_story` / `house_rowhouse` / `house_barn` /
+`house_cabin` / `house_apartment` / `stall` / `windmill`）。
 
 **游戏里（`BugScene`）**
 
@@ -72,7 +88,9 @@
 | `forge` | 铁匠炉火 | 1 × 1 | 64 × 64 | 夜里更亮更大（代码染色） |
 | `villager_body` | 村民的身子 | 1 × 1 | 64 × 64 | 会被**职业颜色**染色（白图 = 直接用职业色） |
 | `villager_head` | 村民的头 | 1 × 1 | 64 × 64 | 会被肤色染色 |
-| `tree_canopy` | 树冠 | 1 × 1 | 128 × 128 | 给了图就不再叠程序化的「内部高光」 |
+| `villager` ⭐ | **整身村民**（一张图画完整个人的那种） | 0.86（高） | 128 × 128 | 交了它就**不再拼「方块身子 + 圆头」**，每个村民随机挑一张（`man1`～`man7`、`woman1`～`woman4` = 11 个变体）。**图原样显示、不染职业色** —— 职业颜色不再作为识别手段，请把 11 个人画得各有辨识度 |
+| `tree_canopy` | 树冠（圆形树，**没有树干**） | 1 × 1 | 128 × 128 | 给了图就不再叠程序化的「内部高光」 |
+| `tree` ⭐ | **整棵树**（含树干） | 1.7–3.2 | 128 × 128 | 交了这张就**整棵替换树冠**（`tree_canopy` 不用再交），影子也不叠了。瘦高构图最合适；可交多张变体（`tree1`～`tree4`），森林偏大树、沙漠偏瘦小那棵 |
 | `berry` | 地上的果子 | 1 × 1 | 64 × 64 | 内容居中、留 1–2px 透明边 |
 | `leaf` | 地上的叶子 | 1 × 1 | 64 × 64 | 同上 |
 | `special_food` | 神奇果实 | 1 × 1 | 128 × 128 | 给了图就不再叠内部亮斑与小星星（外圈光晕保留） |
@@ -153,6 +171,32 @@
 | `cabin_wall` | 木屋的圆木墙 | 1 × 1 | 64 × 64 | 九宫格 |
 | `cabin_roof` | 木屋的屋顶 | 1 × 1 | 128 × 128 | 九宫格 |
 
+**①-2 「整栋建筑」：一张图换一整栋**（房子已经整栋画好了、不想拆成墙 / 门 / 窗时用）
+
+上面那一套是**分件**贴法。如果某一类房子你有画好的整栋图，交下面这个 key 就**整栋换掉**
+（墙 / 门 / 窗 / 屋顶 / 烟囱都不再生成，那几个分件 key 也不用交）：
+
+| key | 是什么 | 占地 | 推荐像素 | 特殊要求 |
+| --- | --- | --- | --- | --- |
+| `house_cottage` | 农舍：整栋 | 2.9–4.4 × 2.5–3.5 | 128 × 128 | 见下面「整栋图的规矩」 |
+| `house_two_story` | 两层小楼：整栋 | 3.2–4.2 × 3.4–4.4 | 128 × 128 | |
+| `house_rowhouse` | 排屋：整栋 | 5.4–7.6 × 2.6–3.2 | 128 × 128 | 占地最宽最扁，图太方会两侧留白 |
+| `house_barn` | 谷仓：整栋 | 4.6–6.2 × 3.6–4.6 | 128 × 128 | |
+| `house_cabin` | 木屋：整栋 | 2.2–2.8 × 2.0–2.6 | 128 × 128 | |
+| `house_apartment` | 公寓：整栋 | 3.2–4.4 × 4.2–5.4 | 128 × 128 | 游戏里最高的一类，竖长图最合适（**别贴边**） |
+| `stall` | 集市摊位：整栋（柜台 + 篷 + 货物） | 2.2 × 1.6 | 128 × 128 | 交了就替掉 `stall_counter` / `stall_awning` / `stall_post` / `stall_goods` |
+| `windmill` | 风车：整栋（**叶片要一起画在图里**） | 1.8–2.4 × 2.6–3.4 | 128 × 128 | 交了就**不再生成会转的叶片**（否则会画两套叶片），塔身 + 叶片都画进来 |
+
+**整栋图的规矩**（和分件贴法完全不同，交之前看一眼）：
+
+- **不拉伸**：图按**自己的长宽比**缩放进这栋建筑的占地矩形（水平居中、底边压在占地的南边），
+  所以不会被拉变形、也不会盖到邻居身上；代价是图的长宽比和占地差太多时两侧（或上方）会留白。
+  想让建筑铺满占地，就把图画成接近上表「占地」那一列的比例。
+- **房子占地上不再有分件**：不需要再交 `house_roof` / `house_wall` / `house_door` / `house_window` / `house_chimney`。
+- **窗子不会在夜里发亮**：整栋是一张静态图，代码没法只点亮窗户；要夜灯效果就用分件贴法。
+- 房子样子跟着**房型**走，与地貌无关（沙漠 / 农村 / 城市用的是同一个 key）。
+- 没交整栋图时该房型继续用分件贴法 —— **两种可以混着用**（交哪类就哪类）。
+
 **② 聚落地标**
 
 | key | 是什么 | 占地 | 推荐像素 | 特殊要求 |
@@ -170,7 +214,7 @@
 
 | key | 是什么 | 占地 | 推荐像素 | 特殊要求 |
 | --- | --- | --- | --- | --- |
-| `bush` | 灌木（草原 / 森林） | 0.8–1.35 | 96 × 96 | 会给一点淡淡的影子 |
+| `bush` ⭐ | 灌木（草原 / 森林） | 0.8–1.35 | 96 × 96 | **按地貌分着用**：`bush1.png` 用草原、`bush2.png` 用森林（编号写在 `VillageGenerator.BushVariantNumber`，想对调改那一行）；只交一张时两片地貌都用它 |
 | `cactus_body` | 仙人掌主干（沙漠） | 0.36–0.5 × 1.1–1.9 | 64 × 128 | |
 | `cactus_arm` | 仙人掌的侧枝 | 0.3 × 0.5 | 64 × 64 | 同一张会横竖各用一次 |
 | `dead_tree` | 枯树（沙漠多、森林少） | 0.2 × 1.2–2.0 | 64 × 128 | 树干与枝共用一张 |
@@ -186,7 +230,10 @@
 
 | key | 是什么 | 占地 | 推荐像素 | 特殊要求 |
 | --- | --- | --- | --- | --- |
-| `rock` | 岩石（沙漠 / 草原） | 0.55–0.85 | 96 × 96 | 能搬（很沉，搬着走很慢）、能撞碎 |
+| `rock_small` ⭐ | 石头·小（哪都有，森林少一点） | 0.34–0.44 | 96 × 96 | 能搬、能撞碎；**一开始就啃得动**（1 级）。可交两张配色变体 |
+| `rock_medium` ⭐ | 石头·中 | 0.55–0.68 | 96 × 96 | 能搬、能撞碎；**2 级**才啃得动。可交两张配色变体 |
+| `rock_large` ⭐ | 石头·大（沙漠多、森林少） | 0.78–0.94 | 96 × 96 | 很沉（搬着走很慢）、能撞碎；**3 级**才啃得动。可交两张配色变体 |
+| `rock_huge` ⭐ | 石头·巨石（基本只在沙漠） | 1.05–1.25 | 96 × 96 | 最沉（搬着几乎走不动）、能撞碎；**4 级（满级）**才啃得动 |
 | `hay_bale` | 草垛（草原） | 0.8–1.0 | 96 × 96 | 九宫格；能搬能吃（2 级） |
 | `log` | 木料堆（森林） | 0.8–1.05 | 96 × 96 | 九宫格；能搬能吃（2 级） |
 | `trash_can` | 垃圾桶（城市） | 0.7–0.9 | 96 × 96 | 九宫格；能搬能吃（2 级） |
@@ -195,6 +242,95 @@
 
 > 哪种地貌有什么，看 `Assets/Scripts/WorldBiome.cs`（地貌 / 聚落的分布与密度）与
 > `Assets/Scripts/ContentPack.cs`（哪样东西属于哪片地貌）。
+>
+> 石头四档的**出现概率按场景不同**：概率 = 基础权重 × 地貌倍率 × 聚落倍率
+> （小碎石到处都有，巨石基本只在沙漠，城里石头最少），四个数字都在 `ContentPack` 的 `RockTier*` 表里。
+> 灰色还是土黄由 `RockColorWeights` 按地貌挑：沙漠 75% 土黄、森林 90% 灰、草原 60% 灰；
+> 同一档只交一张图时就用那一张。
+
+**村民头顶的表情气泡（`emoji_*`，2026-09-25 加）**
+
+村民头顶只有**一个槽位**，优先级：听到动静的感叹号 > 刚进入某个状态时冒一下的表情 > 不显示。
+每张都按属性显示约 1.6 秒（换状态时会再冒一次），**不是常驻气泡**。
+
+| key | 什么时候出现 | 推荐像素 | 特殊要求 |
+| --- | --- | --- | --- |
+| `emoji_exclamation` | 听到动静、起疑（`!`；**没交这张时退回代码画的黄「!」**） | 64 × 64 | 可交两张变体 |
+| `emoji_bulb` | 决定过去查看动静 | 64 × 64 | |
+| `emoji_confused` | 追丢了、在原地翻找 | 64 × 64 | |
+| `emoji_angry` | 看到小虫、追上来 | 64 × 64 | 可交两张变体 |
+| `emoji_no` / `emoji_sad` / `emoji_heart_broken` | 看到小虫、逃跑（三张随机挑一张）；**目睹同伴被吃**一定冒心碎 | 64 × 64 | |
+| `emoji_dizzy` | 被电麻 / 踩到水洼滑倒 | 64 × 64 | |
+| `emoji_haha` / `emoji_love` / `emoji_happy` | 闲聊、孩子玩耍（随机挑一张） | 64 × 64 | |
+| `emoji_speechless` / `emoji_ashamed` | 异常处理完、回过神 | 64 × 64 | |
+| `emoji_sleepy` | 干活干累了 | 64 × 64 | |
+
+> 表情的大小是代码给的（`Villager.emojiSize`，默认 0.46 世界单位、按图的宽高比缩放），
+> 所以**和导入的 PPU 无关**，交 32×38 还是 128×128 都一样大；想改大小改 Inspector。
+> 这些图**不做裁边**（整张画布就是气泡的边界），所以请把表情画满画布，别留大片透明边。
+
+**路口瓦片与直路瓦片（`road_*`，2026-09-25 加）**
+
+路面从「一张贴图铺满整条路」升级成了**瓦片路网**：路口正中一张路口瓦片、每条直路段平铺直路瓦片、
+路走到区块边界而对面接不上时用「尽头瓦片」收口。文件名就写清了「路在哪几边」，不要靠肉眼猜。
+
+| key | 路在哪几边 | 推荐像素 | 特殊要求 |
+| --- | --- | --- | --- |
+| `road_cross` | 四边都有（十字路口） | 128 × 128 | 路宽占画布宽度的比例要**所有瓦片一致**（当前这套是 36/128 ≈ 28%），否则路口会和直路段对不齐 |
+| `road_t_up` | 左 + 右 + 上（缺下边） | 128 × 128 | |
+| `road_t_down` | 左 + 右 + 下（缺上边） | 128 × 128 | |
+| `road_t_left` | 上 + 下 + 左（缺右边） | 128 × 128 | |
+| `road_t_right` | 上 + 下 + 右（缺左边） | 128 × 128 | |
+| `road_corner_up_left` | 上 + 左 | 128 × 128 | |
+| `road_corner_up_right` | 上 + 右 | 128 × 128 | |
+| `road_corner_down_left` | 下 + 左 | 128 × 128 | |
+| `road_corner_down_right` | 下 + 右 | 128 × 128 | |
+| `road_head_up` | 只有下边有路（路往**上**收口） | 128 × 128 | |
+| `road_head_down` | 只有上边有路（路往**下**收口） | 128 × 128 | |
+| `road_head_left` | 只有右边有路（路往**左**收口） | 128 × 128 | |
+| `road_head_right` | 只有左边有路（路往**右**收口） | 128 × 128 | |
+| `road_straight_h` | 横着的直路 | 128 × 128 | 沿路平铺，左右必须接得上 |
+| `road_straight_v` | 竖着的直路 | 128 × 128 | 沿路平铺，上下必须接得上 |
+
+> **两条重要限制（不是 bug）**：
+> ① 这套瓦片的底色是**草地**，所以默认**只在草原、而且不是城市**的地方铺瓦片路网 ——
+> 森林 / 沙漠 / 城市继续用 `ground_*` / `road_*` 那套贴图直铺。
+> 想让沙漠城市也铺，去 `VillageGenerator` 打开 `roadTilesEverywhere`（会露出绿色块，自己权衡）。
+> ② 路口朝向（丁字缺哪边、转角连哪两边）是代码按区块**确定性随机**抽的，
+> 所以 4 张转角和 4 张丁字**都会用到**；一张都不交就完全退回原来的贴图直铺（行为不变）。
+> 美术换了路面宽度的比例，记得同步 `VillageGenerator.roadTileRoadRatio`。
+>
+> **③ 三件「美术得自己保持一致」的事**（不然路看起来会断断续续）：
+> - **所有瓦片的路面宽度比例要一样**（这套都是 36/128 ≈ 28%），偏了会看到路口比直路宽 / 窄；
+> - **直路瓦片里的路要「通长」**：从一边通到对边、两端都顶到图边。代码是沿路把它**拉伸**着铺的
+>   （不是平铺），所以两头没通到边就会露出一截空白；也正因为是拉伸，直路瓦片**不用**做得特别长；
+> - **「路尽头」瓦片里路尖的位置要固定**（这套在离有路那一侧 70% 处，代码里的 `roadHeadTipRatio`）。
+>   路尖不在正中，代码就按这个比例对齐「路到哪儿停」；换了比例要同步这个数。
+>
+> **④ 这套瓦片分辨率偏低**：一块瓦片要铺满约 7 世界单位（农村），而屏幕上 1 世界单位 ≈ 64 px，
+> 所以 128px 的瓦片是**被放大的**（路面纹理会偏糊）。想清楚一点就按「一块瓦片 ≈ 448px」出图
+> （整套尺寸 ×3.5），代码不用改。
+>
+> **⑤ 路面宽度由代码按聚落给**：荒野 **1.5** / 农村 **2.0** / 城市 **2.6** 世界单位
+> （2026-09-25 从 2.4/3.4/4.2 收窄了约 40%，用户嫌太粗）。
+> 一块瓦片的世界尺寸 = 路面宽度 ÷ 你那张图的路面占比（28%）≈ **5.3 / 7.1 / 9.2 世界单位**。
+> 按像素算：**1 世界单位 ≈ 64 px**（当前相机视野），即农村路面 ≈ 128 px 宽。
+
+**地面与路面的多张变体（2026-09-25 加）**
+
+| 你交的文件名 | 归到哪个 key | 效果 |
+| --- | --- | --- |
+| `grass1.png` / `grass2.png` | `ground`（草原地面） | 变体，同一片地面换着用 |
+| `sand1.png`～`sand4.png` | `ground_desert`（沙漠地面） | 变体，**按区块**随机挑一张 —— 一片沙漠不会整片只有一种沙 |
+| `gravel1.png` / `gravel2.png` | `road_paved`（城市石铺路） | 变体（注意：只交 `gravel` 不会让城市改成瓦片路网） |
+| `path1.png` / `path2.png` | `road_straight_v` / `road_straight_h` | 直路瓦片（竖 / 横），见上面那张表 |
+
+**城堡与杂项建筑（2026-09-25 加）**
+
+| key | 是什么 | 占地 | 推荐像素 | 特殊要求 |
+| --- | --- | --- | --- | --- |
+| `castle` ⭐ | **城市里的稀有地标**（`castle1.png` / `castle2.png` = 2 个变体） | 5.6–7.4 × 5.2–6.8 | 128 × 256 | 只有城市会掷一次几率（`VillageGenerator.castleChance`，默认 8%），掷中才盖 |
+| `house_extra` ⭐ | **杂项建筑**：中世纪建筑包那类拆不出墙 / 门 / 窗的整图 | 跟房型一样 | 128 × 128 | 放几张就是几个变体；每盖一栋普通房子都有 `extraHouseChance`（默认 18%）的几率改用这些图，村里于是会混进几栋画风不一样的房子 |
 
 **开始界面（`MainMenu`）**
 
@@ -210,6 +346,7 @@
 **哪些 key 会被代码染色（其余都是图片原样显示）**
 
 - `villager_body` / `villager_head`：衣服颜色 = 职业、肤色随机，颜色本身是「这个村民是谁」的信息；
+- `villager`（整身图）与 `emoji_*`（表情）**不染色**，图片原样显示 —— 整身图里的人和衣服、表情的颜色都是画好的；
 - `house_window` / `lamp_head` / `forge`：白天 / 夜里颜色不同（夜里亮起来）；
 - `highlight` / `highlight_rect` / `garden_flower` / `stall_awning`：底衬的黄橙、花的 5 色、篷布的 5 色；
 - `menu_panel` / `menu_button`：颜色是「哪个按钮干什么」的标识。
@@ -228,9 +365,15 @@
 - 想手工改大小：改该图片 Import Settings 里的 `Pixels Per Unit`（数值越大画面里越小）。
   自动配置只在**首次导入**时执行，之后你手改的值会保留；
 - 文件名没对上 key 时，按通用值 `64 像素 = 1 世界单位` 导入。
+- **整图素材**（`tree` / `bush` / `rock_*`）**不看 `Pixels Per Unit`**：导入时会按不透明内容
+  **自动裁掉透明边**（所以别再担心「画在画布中间会不会变小」），游戏按这张裁好的图的**长宽比**
+  把它装进占地（长的方向填满、另一个方向留白，绝不拉伸），**底边贴地**。
+  想改大小就改该物件的占地（树是随机 1.7–3.2，石头看 `ContentPack` 里的 `sizeMin/sizeMax`），
+  或者干脆把手里的图裁紧一点再交。
 
-**平铺素材**（`ground` / `road` / `ground_forest` / `ground_desert` / `road_dirt` / `road_paved`）
-和**九宫格素材**（`house_roof` / `crate` / `farm_soil` / `menu_button`…）是两种特殊约定，务必按 1.2 节的要求画。
+**平铺素材**（`ground` / `road` / `ground_forest` / `ground_desert` / `road_dirt` / `road_paved`）、
+**九宫格素材**（`house_roof` / `crate` / `farm_soil` / `menu_button`…）
+和**整图素材**（`tree` / `bush` / `rock_*`）是三种特殊约定，务必按 1.2 节的要求画。
 平铺素材导入时会自动把 Wrap Mode 设成 **Repeat** —— 否则平铺时接缝处会被拉伸出一道糊边。
 
 ### 1.4 生效范围与限制
@@ -378,7 +521,7 @@ ground.png        256×256   草地，无缝平铺
 bug_head.png      128×128   小虫的头，朝右
 house_roof.png    128×128   九宫格，屋顶
 crate.png          64×64    九宫格，木箱
-tree_canopy.png   128×128   树冠
+tree1.png         128×128   整棵树（可再来 tree2~tree4 当变体）
 
 —— 继续补（都是独立 key，互不影响）——
 crosshair.png      64×64    点击标记
@@ -454,6 +597,16 @@ barn_door.png         128×128   九宫格，谷仓的双开大门
 cabin_wall.png         64×64    九宫格，木屋的圆木墙
 cabin_roof.png        128×128   九宫格，木屋的屋顶
 
+【整栋建筑】一张图换一整栋（交了就替掉墙 / 门 / 窗 / 屋顶 / 烟囱，按原比例缩放进占地、不变形）
+house_cottage.png     128×128   农舍整栋
+house_two_story.png   128×128   两层小楼整栋
+house_rowhouse.png    128×128   排屋整栋（占地最宽最扁）
+house_barn.png        128×128   谷仓整栋
+house_cabin.png       128×128   木屋整栋
+house_apartment.png   128×128   公寓整栋（最高，竖长图最合适）
+stall.png             128×128   集市摊位整栋（柜台 + 篷 + 货物）
+windmill.png          128×128   风车整栋（叶片一起画进来；交了这个就不再生成转动的叶片）
+
 【聚落地标】
 windmill_body.png     128×128   九宫格，风车塔身（把顶盖一起画进来）
 windmill_blade.png     64×128   风车叶片（一张四片共用，画成竖直一条）
@@ -469,7 +622,7 @@ ground_forest.png     256×256   无缝平铺，森林地面（没图时用 grou
 ground_desert.png     256×256   无缝平铺，沙漠地面（没图时用 road 染沙黄）
 road_dirt.png         256×256   无缝平铺，荒野的土路
 road_paved.png        256×256   无缝平铺，城市的石铺路
-bush.png               96×96    灌木（草原 / 森林）
+bush1.png              96×96    灌木：草原（bush2.png = 森林那一张）
 cactus_body.png        64×128   仙人掌主干（沙漠）
 cactus_arm.png         64×64    仙人掌侧枝
 dead_tree.png          64×128   枯树（沙漠多、森林少）
@@ -484,12 +637,58 @@ cactus_fruit.png       64×64    仙人掌果（沙漠，长在仙人掌旁）
 wheat.png              64×64    麦穗（草原）
 
 【按聚落 / 自然换的可交互物】
-rock.png               96×96    岩石（沙漠 / 草原，能搬能砸）
+rock_small1.png        96×96    石头·小（能搬能砸，1 级就能啃；再来 rock_small2.png 当另一种配色）
+rock_medium1.png       96×96    石头·中（2 级）
+rock_large1.png        96×96    石头·大（3 级，搬起来很慢）
+rock_huge.png          96×96    石头·巨石（4 级，基本只在沙漠）
 hay_bale.png           96×96    九宫格，草垛（草原，能搬能吃）
 log.png                96×96    九宫格，木料堆（森林，能搬能吃）
 trash_can.png          96×96    九宫格，垃圾桶（城市，能搬能吃）
 bucket.png             64×64    九宫格，木桶（农村 / 城市，能搬能吃）
 lantern.png            64×64    灯笼（农村 / 城市，能搬，夜里发亮）
+
+—— 整身村民与表情（2026-09-25 加）——
+villager1.png          128×128   整身村民（man1~7 / woman1~4 都归到 villager，11 个变体随机挑）
+angry1.png              64×64    表情：追人（angry2.png = 第二张变体）
+ashamed1.png            64×64    表情：回过神（ashamed2.png = 第二张变体）
+bulb.png                64×64    表情：决定去看动静
+confused.png            64×64    表情：翻找
+dizzy.png               64×64    表情：被电麻 / 滑倒
+"exclamation mark1.png" 64×64    表情：听到动静的「!」（exclamation mark2.png = 第二张变体）
+haha.png                64×64    表情：闲聊大笑
+happy.png               64×64    表情：玩耍
+heart-broken.png        64×64    表情：目睹同伴被吃
+love1.png               64×64    表情：闲聊（love2.png = 第二张变体）
+no.png                  64×64    表情：逃走
+sad.png                 64×64    表情：逃走
+sleepy.png              64×64    表情：干活干累了
+speechless.png          64×64    表情：回过神
+
+—— 路口瓦片 / 直路瓦片（2026-09-25 加；底色是草地，所以默认只在草原铺）——
+cross.png             128×128   十字路口（四边都有路）
+t-intersection-up.png 128×128   丁字：左 + 右 + 上（缺下边）
+t-intersection-down.png  128×128 丁字：左 + 右 + 下（缺上边）
+t-intersection-left.png  128×128 丁字：上 + 下 + 左（缺右边）
+t-intersection-right.png 128×128 丁字：上 + 下 + 右（缺左边）
+corner-up-left.png    128×128   转角：上 + 左
+corner-up-right.png   128×128   转角：上 + 右
+corner-down-left.png  128×128   转角：下 + 左
+corner-down-right.png 128×128   转角：下 + 右
+roadhead-up.png       128×128   路尽头：路往上收口（图里路在下半张）
+roadhead-down.png     128×128   路尽头：路往下收口
+roadhead-left.png     128×128   路尽头：路往左收口
+roadhead-right.png    128×128   路尽头：路往右收口
+path1.png             128×128   直路瓦片（竖；路宽占画布 28% 左右，所有瓦片要一致）
+path2.png             128×128   直路瓦片（横）
+
+—— 地面 / 路面的变体（2026-09-25 加）——
+grass1.png / grass2.png        256×256   草原地面（变体）
+sand1.png ~ sand4.png          256×256   沙漠地面（变体，按区块随机挑一张）
+gravel1.png / gravel2.png      256×256   城市石铺路（变体）
+
+—— 城堡与杂项建筑（2026-09-25 加）——
+castle1.png / castle2.png      128×256   城堡（城市稀有地标，2 个变体）
+medievalStructure_01.png 等    128×128   杂项建筑（都归到 house_extra，放几张 = 几个变体，随机当村里的杂项建筑）
 
 —— 开始界面（不放就程序绘制）——
 menu_background.png  1920×1080  整屏背景
@@ -551,7 +750,15 @@ break.wav  alarm.wav  slip.wav  fire.wav  bell.wav  swarm.wav
 | 高亮底衬的 key | `Assets/Scripts/Highlighter.cs`（`Setup(key, 程序化精灵)`） |
 | 开始界面背景 / 面板 / 按钮的图片与程序绘制兜底 | `Assets/Scripts/MenuArt.cs`（挂在 `MainMenu.scene` 的 `Canvas` 上） |
 | 图片启动套用（场景精灵那部分） | `Assets/Scripts/ArtOverrideApplier.cs`（挂在 `BugScene/GameDirector` 上） |
-| 图片导入设置自动配置（PPU + 九宫格边框） | `Assets/Scripts/Editor/ArtOverridePostprocessor.cs` |
+| 图片导入设置自动配置（PPU + 九宫格边框 + 整图裁边） | `Assets/Scripts/Editor/ArtOverridePostprocessor.cs` |
+| 变体顺序 / 加权抽变体（按地貌挑图） | `ArtOverride.PickVariant` / `Get(key, 编号)`；树的权重 `VillageGenerator.TreeVariantWeights`、灌木 `BushVariantNumber`、石头配色 `ContentPack.RockColorWeights` |
+| 石头四档的数值（大小 / 重量 / 搬运移速 / 吃什么等级 / 出现概率） | `Assets/Scripts/ContentPack.cs` 的 `RockTierSmall` ~ `RockTierHuge` |
+| 整图素材的摆法（按内容比例装进占地、底边贴地） | `Assets/Scripts/ArtShapes.cs` 的 `AddWholeImage` |
+| **瓦片路网**（路口 / 直路 / 尽头瓦片；路型与路口朝向是纯函数，邻居也算得出来） | `Assets/Scripts/VillageGenerator.cs` 的 `BuildTiledRoad` / `BuildRoadArm` / `RoadTileKey` / `ArmsAt` / `UseRoadTilesFor`；开关与比例 `useRoadTiles` / `roadTilesEverywhere` / `roadTileRoadRatio` |
+| 地貌的路宽与「有没有路」的几率（路口瓦片靠它反推尺寸，**改这里别改别处**） | `Assets/Scripts/WorldBiome.cs` 的 `RoadWidthOf` / `RoadChanceOf` |
+| **整身村民**与**头顶表情** | 整身图在 `VillageGenerator.CreateVillager`（`villagerVisualHeight` / `villagerFootY`）；表情在 `Villager.cs` 的 `BuildEmoji` / `UpdateAlertMark` / `EmojiFor`（大小与寿命 `emojiSize` / `emojiHeight` / `emojiSeconds`） |
+| 城堡 / 杂项建筑的几率 | `VillageGenerator.castleChance` / `extraHouseChance` |
+| **地面 / 铺装的柔边**（把方块边化开，不做硬直角） | `VillageGenerator.AddFeatherRing`；地貌地面 `groundFeatherWidth` / `groundFeatherSteps`、广场（水井周围那块方砖）`plazaFeatherWidth` / `plazaFeatherSteps` |
 | 图片目录内详细说明 | `Assets/Resources/ArtOverride/README.md` |
 | 音频 key 别名表 / 载入逻辑 | `Assets/Scripts/AudioOverride.cs`（key 常量见同文件里的 `AudioKeys`） |
 | 音频播放器（音效 + BGM 切场景） | `Assets/Scripts/AudioOverridePlayer.cs` |
@@ -560,9 +767,16 @@ break.wav  alarm.wav  slip.wav  fire.wav  bell.wav  swarm.wav
 | 音效触发点 | `BugEat.cs`（吃 / 长大）、`DragController.cs`（拾取 / 放下）、`MainMenu.cs`（UI 点击） |
 | 全局音量 | `Assets/Scripts/GameSettings.cs`（`AudioListener.volume` + `PlayerPrefs: game.volume`） |
 
-**改 / 加图片 key**：在 `ArtKeys` 里加一个常量、在 `ArtOverride.Slots` 里加一行（写清原素材、是否染色、是否九宫格、是否平铺），
+**改 / 加图片 key**：在 `ArtKeys` 里加一个常量、在 `ArtOverride.Slots` 里加一行
+（写清原素材、是否染色、是否九宫格、是否平铺、**是否整图素材**），
 然后在生成物件的地方把 key 传进 `AddRect` / `AddDisc` / `AddSlice`（或给场景对象挂 `ArtSlot`）即可；
 最后同步本文档 1.2 节的表和 `Assets/Resources/ArtOverride/README.md`。
+
+**同一个 key 的多张图 = 变体**：文件名结尾的数字就是变体号，程序按数字从小到大排序
+（顺序是**显式排序**的，不依赖 `Resources.LoadAll` 的返回顺序），
+抽签走 `ArtOverride.PickVariant(key, 权重, roll)`（权重数组下标 = 变体顺序）。
+**整图素材**（`Slot.whole`）要在导入时按内容裁边 —— 已经导入过的图改了 `whole` 标记后
+要清掉它 `.meta` 里的 `userData`（= `artoverride`）再重导一次，否则新设置不会生效。
 
 **加一种新的食物 / 可交互物品**（比如「蘑菇」「木桶」）：
 代码那边是**写一个定义 + Register 一行**（`FoodCatalog` / `ItemCatalog`，细节见 `Docs/DevLog/Spec.md` 第 4.5 节，

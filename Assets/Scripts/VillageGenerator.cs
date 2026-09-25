@@ -50,12 +50,40 @@ public class VillageGenerator : MonoBehaviour
     public int seed = 20260922;
 
     [Header("道路与广场")]
-    [Tooltip("路宽（会被 WorldBiome 按聚落覆盖：城市更宽、荒野是窄土路）")]
-    public float roadWidth = 3.4f;
+    [Tooltip("路宽（会被 WorldBiome 按聚落覆盖：荒野 1.5 / 农村 2.0 / 城市 2.6。**要改路宽改 WorldBiome.RoadWidthOf**）")]
+    public float roadWidth = 2f;
     [Tooltip("广场边长（会被 WorldBiome 按聚落覆盖）")]
     public float plazaSize = 10f;
     [Tooltip("**路型按 2×2 个区块一片抽签**：同一片常常是同一种路型，路才连得起来（见 PickRoadShape）")]
     public int roadRunLength = 2;
+
+    [Header("路口瓦片（有图才用得上）")]
+    [Tooltip("有路口 / 直路 / 尽头瓦片时，路改成「按路口形状铺瓦片」（不再靠长方形互相重叠）。关掉就退回贴图直铺")]
+    public bool useRoadTiles = true;
+    [Tooltip("把瓦片路网也铺到森林 / 沙漠 / 城市。**交付的这套瓦片自带草地底色**，铺过去会露出一块块绿，"
+        + "所以默认只在草原、且不是城市的地方铺")]
+    public bool roadTilesEverywhere = false;
+    [Tooltip("瓦片图里「路面」占画布宽度的比例（这套是 36 ÷ 128 = 0.28125）。"
+        + "路口瓦片的世界尺寸 = 路面宽度 ÷ 它，这样瓦片里的路正好和直路段一样宽；换了比例改这里")]
+    [Range(0.05f, 1f)] public float roadTileRoadRatio = 0.28125f;
+    [Tooltip("「路尽头」瓦片里，路尖到**有路那一侧**边缘的距离占瓦片尺寸的比例（这套是 0.70："
+        + "roadhead-right 左半边是路、路尖在 70% 处）。摆瓦片时按它对齐，路尖才落在区块边界上；换了美术要重新量")]
+    [Range(0.3f, 1f)] public float roadHeadTipRatio = 0.7f;
+
+    [Header("地面 / 铺装的柔边（2026-09-25 用户要的「平滑」）")]
+    [Tooltip("村中心要不要铺那块方形铺装（水井 / 喷泉周围）。**默认关**：2026-09-25 用户要求「取消水井周围的方形地块」")]
+    public bool drawPlazaPaving = false;
+    [Tooltip("不铺那块铺装时，村中心（水井 / 喷泉周围）仍然留出的空地直径（世界单位）。\n"
+        + "留一小块是为了房子不会压到井上；铺装打开时用 plazaSize")]
+    public float plazaClearRadius = 5f;
+    [Tooltip("地貌地面（森林 / 沙漠）的边缘往外柔化多远（世界单位）；0 = 关掉。3 米 ≈ 一块 32 米地面的 9%")]
+    public float groundFeatherWidth = 3f;
+    [Tooltip("地貌地面柔边分几圈（圈数越多越平滑，每圈一个半透明四边形）")]
+    [Range(1, 8)] public int groundFeatherSteps = 4;
+    [Tooltip("铺装（水井 / 喷泉周围那块方砖）的边缘往外柔化多远")]
+    public float plazaFeatherWidth = 1.6f;
+    [Tooltip("铺装柔边分几圈")]
+    [Range(1, 8)] public int plazaFeatherSteps = 4;
 
     // ---------------- 每个区块生成前被 WorldBiome 整体覆盖的数字 ----------------
     // 这里是「农村 + 草原」的基数，只作为 Inspector 的默认值存在，改数值请改 WorldBiome。
@@ -119,6 +147,13 @@ public class VillageGenerator : MonoBehaviour
     [Range(0f, 1f)] public float stallChance = 0.8f;
     [Range(0f, 1f)] public float gardenChance = 0.7f;
     [Range(0f, 1f)] public float boardChance = 0.4f;
+
+    [Header("美术整图建筑（有图才用得上）")]
+    [Tooltip("交了多少张「杂项建筑」（house_extra）就在这里抽多少几率：这一栋普通房子改用那张整图盖。\n"
+        + "这是**每栋房子各自**的几率，不是每区块一次 —— 0 = 永远盖普通房子")]
+    [Range(0f, 1f)] public float extraHouseChance = 0.18f;
+    [Tooltip("城市里出现城堡（castle）的几率：稀有地标，只有城市会掷这一次")]
+    [Range(0f, 1f)] public float castleChance = 0.08f;
 
     [Header("锚点表")]
     [Tooltip("设施锚点表；留空会自动找场景里的 VillageMap")]
@@ -264,7 +299,8 @@ public class VillageGenerator : MonoBehaviour
         chunkWorldSeed = worldSeed;
         center = new Vector2(coord.x * chunkSize, coord.y * chunkSize);
         radius = chunkSize * 0.5f;
-        rng = new System.Random(Hash(worldSeed, coord.x, coord.y));
+        int chunkSeed = Hash(worldSeed, coord.x, coord.y);
+        rng = new System.Random(chunkSeed);
         occupied.Clear();
         roadRects.Clear();
 
@@ -273,6 +309,11 @@ public class VillageGenerator : MonoBehaviour
         settlement = WorldBiome.SettlementAt(coord, worldSeed);
         hamlet = settlement != SettlementKind.Wilderness;
         WorldBiome.Apply(settlement, nature, this);
+
+        // 内容定义（石头这类）在造物体时要按地貌挑外观、按位置挑变体图，所以把「当前区块」广播出去
+        SpawnContext.Nature = nature;
+        SpawnContext.Settlement = settlement;
+        SpawnContext.Seed = chunkSeed;
 
         GameObject chunkGo = new GameObject("Chunk_" + coord.x + "_" + coord.y);
         chunkGo.transform.SetParent(transform, false);
@@ -496,6 +537,35 @@ public class VillageGenerator : MonoBehaviour
         return sr;
     }
 
+    /// <summary>
+    /// **整栋建筑**：玩家给这个 key 放了图，就整栋用那一张图（屋顶 / 墙 / 门 / 窗都不用再拼），返回 true。
+    ///
+    /// 摆放规则：**按原图比例缩放进占地矩形**（contain —— 水平居中、底边压在占地的南边、不超出地块），
+    /// 所以图不会被拉变形，也不会盖到邻居头上；代价是图的长宽比和地块差得多时两侧（或上方）会留白。
+    /// 尺寸靠 <c>SpriteRenderer.size</c>（世界单位）给定，与导入的 Pixels Per Unit 无关。
+    /// </summary>
+    bool AddWholeBuilding(Transform parent, string key, Rect area, int order, string name = "WholeBuilding")
+    {
+        return AddWholeBuilding(parent, key, ArtOverride.Get(key), area, order, name);
+    }
+
+    /// <summary>
+    /// 同上，但**直接指定用哪一张图**：给「同名多图 = 变体」的整图 key（<c>house_extra</c> / <c>castle</c>）
+    /// 按区块挑一张用。注意这种情况下 <c>key</c> 只用来记账（<see cref="ArtOverride.Get"/> 会取回第一张变体，
+    /// 那样挑出来的变体就被覆盖了），所以这里不走 <c>AddSlice</c> 的 key 参数。
+    /// </summary>
+    bool AddWholeBuilding(Transform parent, string key, Sprite image, Rect area, int order, string name = "WholeBuilding")
+    {
+        if (image == null) return false;
+
+        float aspect = image.rect.width / Mathf.Max(1f, image.rect.height);
+        float h = Mathf.Min(area.height, area.width / aspect);
+        float w = h * aspect;
+        Vector2 local = new Vector2(0f, area.yMin - area.center.y + h * 0.5f);
+        AddSlice(parent, name, image, new Vector2(w, h), local, Color.white, order);
+        return true;
+    }
+
     // ---------------- 地貌地面 ----------------
 
     /// <summary>
@@ -514,6 +584,12 @@ public class VillageGenerator : MonoBehaviour
         if (baseSprite == null) baseSprite = groundSprite != null ? groundSprite : rectSprite;
         Sprite sprite = nature == NatureKind.Desert && roadSprite != null ? roadSprite : baseSprite;
 
+        // 这个地貌自己的地面图（森林 ground_forest / 沙漠 ground_desert）：同名多图 = 变体
+        //（草地 2 张、沙 4 张），**按区块**挑一张 —— 一片沙漠不会整片只有一种沙。
+        // 挑不到就退回上面那张底图（草原本来就走无限草地，这里直接 return 了）。
+        Sprite biomeGround = ArtOverride.PickVariant(key, null, (float)rng.NextDouble());
+        if (biomeGround != null) sprite = biomeGround;
+
         GameObject go = new GameObject("BiomeGround");
         go.transform.SetParent(groundRoot, false);
         go.transform.position = new Vector3(center.x, center.y, 0f);
@@ -522,12 +598,55 @@ public class VillageGenerator : MonoBehaviour
         sr.sprite = sprite;
         sr.drawMode = SpriteDrawMode.Tiled;
         sr.size = new Vector2(chunkSize, chunkSize);   // 正好一块区块，和邻块的网格对齐
-        sr.color = WorldBiome.GroundTint(nature);
+        // 用了图片就是「图说了算」（不染色）；还是程序化贴图时才按地貌染色
+        Color groundColor = biomeGround != null ? Color.white : WorldBiome.GroundTint(nature);
+        sr.color = groundColor;
         ApplyGroundLayer(sr);
         sr.sortingOrder = -895;
 
-        ArtOverride.Apply(sr, key);
         ForceTiling(sr.sprite);
+
+        // **柔边**：往外再铺几圈同样的地面贴图、一层比一层淡。这样这块地貌地面和邻块
+        //（尤其是草原的无限草地）之间不再是「一刀切的直角」，而是几米宽的渐变 —— 一块块方形
+        // 地貌的边界就化开了（2026-09-25 用户要的「缩小 + 平滑」，见 Spec §4.15）。
+        // 邻块是同一片地貌时，几圈半透明同色贴图叠在同一色上，看不出任何痕迹。
+        Rect chunkArea = new Rect(center.x - chunkSize * 0.5f, center.y - chunkSize * 0.5f, chunkSize, chunkSize);
+        AddFeatherRing(groundRoot, "GroundFeather", chunkArea, sprite, groundColor,
+            groundFeatherWidth, groundFeatherSteps, -894);
+    }
+
+    /// <summary>
+    /// 给一块「铺在地上的矩形」加柔边：往外铺 <paramref name="steps"/> 圈同样的贴图，一层比一层淡。
+    /// 好处是**贴图与颜色和本体完全一致**（不需要一整套软边素材），只是透明度往外递减；
+    /// 圈数是叠加的，所以从边缘往外是一条阶梯状的透明渐变（4 圈 ≈ 5 级台阶，肉眼已经连续）。
+    /// 顺序随便：同色叠加和先后无关。**Order 要压在道路（−885 ~ −882）之下**，免得给路蒙一层。
+    /// </summary>
+    void AddFeatherRing(Transform parent, string name, Rect area, Sprite sprite, Color color,
+        float width, int steps, int order)
+    {
+        if (sprite == null || width <= 0.01f || steps <= 0) return;
+
+        float step = width / steps;
+        for (int i = 0; i < steps; i++)
+        {
+            float grow = step * (i + 1);
+            Rect ring = new Rect(area.xMin - grow, area.yMin - grow, area.width + grow * 2f, area.height + grow * 2f);
+            Color ringColor = color;
+            // 越外圈越淡（0.55 / 0.41 / 0.28 / 0.14 …）；叠起来正好接上本体的不透明边缘
+            ringColor.a = color.a * 0.55f * (1f - i / (float)steps);
+
+            GameObject go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            go.transform.position = new Vector3(ring.center.x, ring.center.y, 0f);
+            SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = sprite;
+            sr.drawMode = SpriteDrawMode.Tiled;
+            sr.size = new Vector2(ring.width, ring.height);
+            sr.color = ringColor;
+            ApplyGroundLayer(sr);
+            sr.sortingOrder = order;
+            ForceTiling(sr.sprite);
+        }
     }
 
     // ---------------- 道路（路型随机，相邻区块靠「成片抽签」尽量接得上）----------------
@@ -535,18 +654,38 @@ public class VillageGenerator : MonoBehaviour
     /// <summary>路型：不再是固定的十字路。</summary>
     enum RoadShape { None, StraightH, StraightV, Cross, TJunction, LJunction }
 
+    // 路在「哪几边」用位表示（路口瓦片就是按这个拼出来的，见 RoadTileKey）
+    const int ArmRight = 1;
+    const int ArmUp = 2;
+    const int ArmLeft = 4;
+    const int ArmDown = 8;
+
     void BuildRoads()
     {
         string key = WorldBiome.RoadKey(settlement);
         Color tint = WorldBiome.RoadTint(settlement);
 
         RoadShape shape = PickRoadShape();
-        float half = roadWidth * 0.5f;
+        if (shape == RoadShape.None) return;
 
+        float half = roadWidth * 0.5f;
         Rect horizontal = new Rect(center.x - radius, center.y - half, radius * 2f, roadWidth);
         Rect vertical = new Rect(center.x - half, center.y - radius, roadWidth, radius * 2f);
         Rect horizontalHalf = new Rect(center.x, center.y - half, radius, roadWidth);
         Rect verticalHalf = new Rect(center.x - half, center.y, roadWidth, radius);
+
+        // 有路口瓦片就按「路口形状」铺瓦片，没有就照旧用长方形互相重叠
+        if (UseRoadTilesFor(nature, settlement) && BuildTiledRoad(shape, key, tint))
+        {
+            // 占位 / 巡逻取样点：按**实际铺出去的那几条边**登记（路口瓦片的朝向是抽出来的，
+            // 所以不能再用那几张写死方向的老长方形 —— 否则路铺在下面、房子却盖上去）
+            int mask = ArmMask(shape, TurnIndex(chunkCoord, chunkWorldSeed));
+            if ((mask & ArmLeft) != 0) RegisterRoad(new Rect(center.x - radius, center.y - half, radius, roadWidth));
+            if ((mask & ArmRight) != 0) RegisterRoad(new Rect(center.x, center.y - half, radius, roadWidth));
+            if ((mask & ArmUp) != 0) RegisterRoad(new Rect(center.x - half, center.y, roadWidth, radius));
+            if ((mask & ArmDown) != 0) RegisterRoad(new Rect(center.x - half, center.y - radius, roadWidth, radius));
+            return;
+        }
 
         switch (shape)
         {
@@ -578,12 +717,25 @@ public class VillageGenerator : MonoBehaviour
     /// </summary>
     RoadShape PickRoadShape()
     {
-        if (!Chance(roadChance)) return RoadShape.None;
+        // 「有没有路」走**纯函数**版（哈希版的第一次抽签），这样邻居区块也算得出一模一样的结果
+        // （路口瓦片要知道「对面的路接不接得上」）。这里照样消耗一次 rng —— 让后面的随机序列
+        // 和以前完全一致，同种子的村庄不会因为这次改动换个样子。
+        Chance(roadChance);
+        return PickRoadShape(chunkCoord, chunkWorldSeed, settlement, roadChance, roadRunLength);
+    }
 
-        int run = Mathf.Max(1, roadRunLength);
-        int bx = Mathf.FloorToInt(chunkCoord.x / (float)run);
-        int by = Mathf.FloorToInt(chunkCoord.y / (float)run);
-        System.Random shapeRng = new System.Random(Hash(chunkWorldSeed * 31 + 17, bx * 7919 + 13, by * 104729 + 7));
+    /// <summary>
+    /// **纯函数**版的路型抽签：只看「区块坐标 + 世界种子 + 聚落 + 路几率 + 成片长度」，
+    /// 所以能给**还没生成的邻居区块**算出它的路型。改抽签规则只改这里（实例版也调它）。
+    /// </summary>
+    static RoadShape PickRoadShape(Vector2Int coord, int worldSeed, SettlementKind settlement, float roadChance, int runLength)
+    {
+        if (!RoadPresent(coord, worldSeed, roadChance)) return RoadShape.None;
+
+        int run = Mathf.Max(1, runLength);
+        int bx = Mathf.FloorToInt(coord.x / (float)run);
+        int by = Mathf.FloorToInt(coord.y / (float)run);
+        System.Random shapeRng = new System.Random(Hash(worldSeed * 31 + 17, bx * 7919 + 13, by * 104729 + 7));
         double roll = shapeRng.NextDouble();
 
         if (settlement == SettlementKind.City)
@@ -609,12 +761,264 @@ public class VillageGenerator : MonoBehaviour
         return RoadShape.Cross;
     }
 
+    /// <summary>
+    /// 「这个区块有没有路」= 以区块种子为种子、拿路几率做门槛抽的第一个随机数。
+    /// 是**纯函数**（所以邻居也算得出来），而且结果和以前那个实例 rng 抽签**完全一样**。
+    /// 前提是「<see cref="BuildChunk"/> 里第一次用 rng 就是抽路」—— 改生成顺序时记得回来看这里。
+    /// </summary>
+    static bool RoadPresent(Vector2Int coord, int worldSeed, float roadChance)
+    {
+        return new System.Random(Hash(worldSeed, coord.x, coord.y)).NextDouble() < roadChance;
+    }
+
+    /// <summary>路口的朝向（0~3）：也是纯函数，邻居和自己算出来必须一样。</summary>
+    static int TurnIndex(Vector2Int coord, int worldSeed)
+    {
+        return new System.Random(Hash(worldSeed * 31 + 101, coord.x * 5227 + 3, coord.y * 8123 + 5)).Next(4);
+    }
+
+    /// <summary>路在哪几边。丁字路口的 <paramref name="turn"/> 决定**缺哪一边**、L 型决定**连哪两边**。</summary>
+    static int ArmMask(RoadShape shape, int turn)
+    {
+        int all = ArmLeft | ArmRight | ArmUp | ArmDown;
+        switch (shape)
+        {
+            case RoadShape.StraightH: return ArmLeft | ArmRight;
+            case RoadShape.StraightV: return ArmUp | ArmDown;
+            case RoadShape.Cross: return all;
+            case RoadShape.TJunction: return all & ~TurnMissing(turn);
+            case RoadShape.LJunction:
+                switch (((turn % 4) + 4) % 4)
+                {
+                    case 0: return ArmRight | ArmUp;
+                    case 1: return ArmLeft | ArmUp;
+                    case 2: return ArmLeft | ArmDown;
+                    default: return ArmRight | ArmDown;
+                }
+            default: return 0;
+        }
+    }
+
+    /// <summary>丁字路口缺的那一边：0 缺下、1 缺右、2 缺上、3 缺左（和瓦片文件名一一对应）。</summary>
+    static int TurnMissing(int turn)
+    {
+        switch (((turn % 4) + 4) % 4)
+        {
+            case 0: return ArmDown;
+            case 1: return ArmRight;
+            case 2: return ArmUp;
+            default: return ArmLeft;
+        }
+    }
+
+    /// <summary>这个「路在哪几边」的形状对应哪张路口瓦片；没有正好对应的返回 null（那就铺路面贴图）。</summary>
+    static string RoadTileKey(int mask)
+    {
+        switch (mask)
+        {
+            case ArmLeft | ArmRight | ArmUp | ArmDown: return ArtKeys.RoadCross;
+            case ArmLeft | ArmRight | ArmUp: return ArtKeys.RoadTUp;
+            case ArmLeft | ArmRight | ArmDown: return ArtKeys.RoadTDown;
+            case ArmLeft | ArmUp | ArmDown: return ArtKeys.RoadTLeft;
+            case ArmRight | ArmUp | ArmDown: return ArtKeys.RoadTRight;
+            case ArmLeft | ArmUp: return ArtKeys.RoadCornerUpLeft;
+            case ArmRight | ArmUp: return ArtKeys.RoadCornerUpRight;
+            case ArmLeft | ArmDown: return ArtKeys.RoadCornerDownLeft;
+            case ArmRight | ArmDown: return ArtKeys.RoadCornerDownRight;
+            default: return null;
+        }
+    }
+
+    static string HeadKeyOf(int dir)
+    {
+        switch (dir)
+        {
+            case ArmUp: return ArtKeys.RoadHeadUp;
+            case ArmDown: return ArtKeys.RoadHeadDown;
+            case ArmLeft: return ArtKeys.RoadHeadLeft;
+            default: return ArtKeys.RoadHeadRight;
+        }
+    }
+
+    static int OppositeArm(int dir)
+    {
+        switch (dir)
+        {
+            case ArmUp: return ArmDown;
+            case ArmDown: return ArmUp;
+            case ArmLeft: return ArmRight;
+            default: return ArmLeft;
+        }
+    }
+
+    /// <summary>
+    /// **纯函数**：某个区块的路在那几边（连「这个区块用不用瓦片」也算进去了 ——
+    /// 不用瓦片的区块保留老朝向，所以两边的判断必须一致）。
+    /// </summary>
+    int ArmsAt(Vector2Int coord)
+    {
+        SettlementKind settlementThere = WorldBiome.SettlementAt(coord, chunkWorldSeed);
+        NatureKind natureThere = WorldBiome.NatureAt(coord, chunkWorldSeed);
+        RoadShape shape = PickRoadShape(coord, chunkWorldSeed, settlementThere,
+            WorldBiome.RoadChanceOf(settlementThere), roadRunLength);
+        int turn = UseRoadTilesFor(natureThere, settlementThere) ? TurnIndex(coord, chunkWorldSeed) : 0;
+        return ArmMask(shape, turn);
+    }
+
+    /// <summary>
+    /// 这块地要不要走「瓦片路网」。**默认只在草原铺**：交付的这套瓦片自带草地底色，
+    /// 铺到森林 / 沙漠 / 城市会露出一块块绿（想铺就去 Inspector 打开 <see cref="roadTilesEverywhere"/>）。
+    /// </summary>
+    bool UseRoadTilesFor(NatureKind natureThere, SettlementKind settlementThere)
+    {
+        if (!useRoadTiles) return false;
+        if (roadTilesEverywhere) return true;
+        return natureThere == NatureKind.Grassland && settlementThere != SettlementKind.City;
+    }
+
+    /// <summary>
+    /// 路口 / 直路瓦片自带的地面底色。地面已经是图片时不染色（图片说了算）；
+    /// 地面还是程序化贴图时，把瓦片染成地貌地面的颜色，接缝处才不露馅。
+    /// </summary>
+    Color RoadTileGroundTint()
+    {
+        string groundKey = WorldBiome.GroundKey(nature);        // 草原返回 null（用无限草地）
+        if (!string.IsNullOrEmpty(groundKey) && ArtOverride.Has(groundKey)) return Color.white;
+        if (ArtOverride.Has(ArtKeys.Ground)) return Color.white;
+        return WorldBiome.GroundTint(nature);
+    }
+
+    /// <summary>
+    /// 按「路口形状」铺路：路口正中一张路口瓦片、每条直路段平铺直路瓦片、路走到边界而对面接不上时用尽头瓦片收口。
+    /// 返回 false = 这套瓦片一张都没有，交回「长方形互相重叠」那条老路（行为完全不变）。
+    /// </summary>
+    bool BuildTiledRoad(RoadShape shape, string key, Color tint)
+    {
+        int mask = ArmMask(shape, TurnIndex(chunkCoord, chunkWorldSeed));
+        string junctionKey = RoadTileKey(mask);
+        Sprite junction = string.IsNullOrEmpty(junctionKey) ? null : ArtOverride.Get(junctionKey);
+        Sprite straightH = ArtOverride.Get(ArtKeys.RoadStraightH);
+        Sprite straightV = ArtOverride.Get(ArtKeys.RoadStraightV);
+        if (junction == null && straightH == null && straightV == null) return false;
+
+        float half = roadWidth * 0.5f;
+        // 瓦片的世界尺寸 = 路面宽度 ÷ 「瓦片图里路面占画布的比例」：这样瓦片里的路正好和直路段一样宽
+        float tile = roadWidth / Mathf.Clamp(roadTileRoadRatio, 0.05f, 1f);
+        Color groundTint = RoadTileGroundTint();
+
+        // 正中那一块：**必须也是道路砖块**，不能拿路面贴图去接 —— 那张贴图和瓦片里的路既不同色也不同纹理，
+        // 接缝处会露出一块异色方块（用户 2026-09-25：「道路中间不要用除了道路砖块之外的砖块接驳」）。
+        bool centreIsTile = false;
+        if (junction != null)
+        {
+            // 注意**不传 key**：AddSlice 带 key 时会调 ArtOverride.Apply，那会把颜色刷成白的，
+            // 刚算好的 groundTint（程序化地面时按地貌染色）就白算了。图在这里已经取好了。
+            AddSlice(roadsRoot, "RoadJunction", junction, new Vector2(tile, tile), Vector2.zero,
+                groundTint, -883, true);
+            centreIsTile = true;
+        }
+        else
+        {
+            // 直路区块（路只在左右、或只在上下）：正中用**同方向的直路瓦片**收口 ——
+            // 它的路是「通长」的，正好把两条臂接起来，纹理与颜色完全一致。
+            Sprite centreTile = (mask & (ArmLeft | ArmRight)) != 0 ? straightH : straightV;
+            if (centreTile != null)
+            {
+                AddSlice(roadsRoot, "RoadStraight", centreTile, new Vector2(tile, tile), Vector2.zero,
+                    groundTint, -883, true);
+                centreIsTile = true;
+            }
+        }
+        if (!centreIsTile)
+        {
+            // 连直路瓦片都没交时才退回路面贴图（免得中间空一块）—— 有素材的工程走不到这里
+            AddRoadRect(new Rect(center.x - half, center.y - half, roadWidth, roadWidth), key, tint, -883);
+        }
+
+        // 直路段从瓦片边缘开始铺（用瓦片收口时），否则从路面方块边缘开始
+        float start = centreIsTile ? tile * 0.5f : half;
+
+        // 左右臂的路是**横向**的 → 用横向直路瓦片（road_straight_h，图里的路沿 X 走）；
+        // 上下臂反过来。**别搞反**：搞反了每段路会画成一条横在路中央的挡板（2026-09-25 踩到）。
+        BuildRoadArm(ArmLeft, mask, straightH, start, tile, key, tint, groundTint);
+        BuildRoadArm(ArmRight, mask, straightH, start, tile, key, tint, groundTint);
+        BuildRoadArm(ArmUp, mask, straightV, start, tile, key, tint, groundTint);
+        BuildRoadArm(ArmDown, mask, straightV, start, tile, key, tint, groundTint);
+        return true;
+    }
+
+    /// <summary>
+    /// 铺一条直路段，并在「这条路走到区块边界、对面却没有对接的路」时放一张尽头瓦片收口。
+    /// <paramref name="straightTile"/> 为空就用路面贴图（两条路都对得上，因为宽度和中心线是一样的）。
+    /// </summary>
+    void BuildRoadArm(int dir, int mask, Sprite straightTile, float start, float tile, string key, Color tint, Color groundTint)
+    {
+        if ((mask & dir) == 0) return;                       // 这一边本来就没有路
+
+        float length = radius - start;
+        if (length <= 0.05f) return;
+
+        bool horizontal = dir == ArmLeft || dir == ArmRight;
+        float sign = (dir == ArmRight || dir == ArmUp) ? 1f : -1f;
+        Vector2 armCenter = horizontal
+            ? new Vector2(sign * (start + length * 0.5f), 0f)
+            : new Vector2(0f, sign * (start + length * 0.5f));
+
+        if (straightTile != null)
+        {
+            // **用 Sliced（拉伸）而不是 Tiled**：Tiled 是按「精灵自己的自然尺寸」重复的，
+            // 而这张瓦片的自然尺寸是 128px ÷ 64PPU = **2 世界单位**，可路面要好几米 ——
+            // 于是一条路面上会并排重复好几次，画出来就是若干条细条纹（2026-09-25 踩到的「条纹状」）。
+            //
+            // 沿路方向**分几张铺**（不是一张拉到底）：瓦片里的路是「通长一条」、且左右边值对得上，
+            // 所以相邻两张天然接得上；分几张是为了别把图的横向细节拉长（路越窄、瓦片越小，
+            // 一张拉到底就会拉成 2 倍长）。张数 = 长度 ÷ 瓦片尺寸 四舍五入，长度再**均分**给每张。
+            int count = Mathf.Max(1, Mathf.RoundToInt(length / tile));
+            float piece = length / count;
+            for (int i = 0; i < count; i++)
+            {
+                float along = start + piece * (i + 0.5f);
+                Vector2 at = horizontal ? new Vector2(sign * along, 0f) : new Vector2(0f, sign * along);
+                Vector2 size = horizontal ? new Vector2(piece, tile) : new Vector2(tile, piece);
+                AddSlice(roadsRoot, "RoadStraight", straightTile, size, at, groundTint, -884, true);
+            }
+        }
+        else
+        {
+            Vector2 size = horizontal ? new Vector2(length, roadWidth) : new Vector2(roadWidth, length);
+            AddRoadRect(new Rect(center.x + armCenter.x - size.x * 0.5f, center.y + armCenter.y - size.y * 0.5f,
+                size.x, size.y), key, tint, -884);
+        }
+
+        // 尽头收口：隔壁那块地没有能接上的路 → 在边界上盖一张「路尽头」瓦片
+        Vector2Int step = horizontal
+            ? new Vector2Int(dir == ArmRight ? 1 : -1, 0)
+            : new Vector2Int(0, dir == ArmUp ? 1 : -1);
+        if ((ArmsAt(chunkCoord + step) & OppositeArm(dir)) != 0) return;
+
+        string headKey = HeadKeyOf(dir);
+        Sprite head = ArtOverride.Get(headKey);
+        if (head == null) return;
+
+        // 路尽头瓦片里的「路尖」**不在瓦片正中**（交付的这套在 0.70 处，见 roadHeadTipRatio），
+        // 所以按「让路尖正好落在区块边界上」来摆：把瓦片中心摆在边界上会让路多伸出去 0.2×tile ≈ 2.4 米。
+        float offset = sign * (radius - (roadHeadTipRatio - 0.5f) * tile);
+        Vector2 endPoint = horizontal ? new Vector2(offset, 0f) : new Vector2(0f, offset);
+        AddSlice(roadsRoot, "RoadHead", head, new Vector2(tile, tile), endPoint, groundTint, -882, true);
+    }
+
     /// <summary>铺一段路（占位 + 给守卫巡逻用的取样点）。</summary>
     void AddRoad(Rect area, string key, Color tint)
     {
+        RegisterRoad(area);
+        AddRoadRect(area, key, tint, -885);
+    }
+
+    /// <summary>只登记「这儿是路」（占位 + 守卫巡逻的取样点），不画东西。</summary>
+    void RegisterRoad(Rect area)
+    {
         occupied.Add(area);
         roadRects.Add(area);
-        AddRoadRect(area, key, tint, -885);
 
         if (map == null) return;
         // 守卫巡逻用的路上取样点（沿着这段路走）
@@ -660,10 +1064,28 @@ public class VillageGenerator : MonoBehaviour
 
         if (plaza)
         {
-            Rect area = new Rect(center.x - plazaSize * 0.5f, center.y - plazaSize * 0.5f, plazaSize, plazaSize);
+            // **不铺方砖时只留一小圈**：以前那块 10×10 是「铺装广场」所以要留空，
+            // 现在村子中心只是「路口 + 水井」，再空着 10×10 就白占了 10% 的地（用户 2026-09-25
+            // 紧接着要「房屋密度不够」）。所以不铺铺装时把保留区收到井边一小块就走。
+            float reserve = drawPlazaPaving ? plazaSize : Mathf.Min(plazaSize, plazaClearRadius * 2f);
+            Rect area = new Rect(center.x - reserve * 0.5f, center.y - reserve * 0.5f, reserve, reserve);
+            // **位置照旧登记**（occupied / roadRects）：水井周围留一小块空地，房子不会压到井上；
+            // 守卫巡逻的取样点也照旧。
             occupied.Add(area);
             roadRects.Add(area);
-            AddRoadRect(area, key, tint, -880);          // 广场比路面再高一层
+
+            // 但**默认不铺那块方形铺装了**（2026-09-25 用户：「取消水井周围的方形地块」）：
+            // 村中心就是「路口 + 水井」，脚下是草地，不再有那块 10×10 的方砖。
+            // 顺带解决了「广场盖住路口瓦片、四角露出一圈草地」那个遗留（见 §4.13）。
+            // **注意不要动上面那次 Chance(plazaChance) 抽签** —— 少了它整条随机序列会错位，
+            // 所有区块的布局都会变（Spec §4.2 的确定性）。
+            if (drawPlazaPaving)
+            {
+                AddRoadRect(area, key, tint, -880);          // 广场比路面再高一层
+                // 铺装柔边：往外几圈半透明路面贴图（order 压在道路之下，免得给路蒙一层）
+                AddFeatherRing(roadsRoot, "PlazaFeather", area, roadSprite, tint,
+                    plazaFeatherWidth, plazaFeatherSteps, -888);
+            }
         }
 
         Vector2 spot = center;
@@ -732,6 +1154,7 @@ public class VillageGenerator : MonoBehaviour
         if (Chance(powerPlantChance)) BuildPowerPlant();
         if (Chance(windmillChance)) BuildWindmill();
         if (Chance(bellTowerChance)) BuildBellTower();
+        if (settlement == SettlementKind.City && Chance(castleChance)) BuildCastle();
         if (Chance(stallChance)) BuildStall(Rand(0f, 360f));
         if (Chance(gardenChance)) BuildGarden();
         if (Chance(boardChance)) BuildNoticeBoard();
@@ -748,6 +1171,39 @@ public class VillageGenerator : MonoBehaviour
     {
         if (campfireChance > 0f && Chance(campfireChance)) BuildCampfire();
         if (oasisChance > 0f && Chance(oasisChance)) BuildOasis();
+    }
+
+    /// <summary>
+    /// 城堡：**城市里的稀有地标**（只有在城市、且 <see cref="castleChance"/> 掷中时才盖）。
+    /// 是一整张图（<c>castle</c>，放两张就是两个变体），按原比例装进一块空地 —— 和整栋房子同一套摆放规则。
+    /// 没有图片时什么都不做（城市照旧）。
+    /// </summary>
+    void BuildCastle()
+    {
+        if (ArtOverride.VariantCount(ArtKeys.Castle) == 0) return;
+
+        for (int attempt = 0; attempt < 40; attempt++)
+        {
+            float w = Rand(5.6f, 7.4f);
+            float h = Rand(5.2f, 6.8f);
+            Vector2 c = center + new Vector2(Rand(-radius + w * 0.5f + 1.2f, radius - w * 0.5f - 1.2f),
+                                             Rand(-radius + h * 0.5f + 1.2f, radius - h * 0.5f - 1.2f));
+            Rect area = new Rect(c.x - w * 0.5f, c.y - h * 0.5f, w, h);
+            if (!IsFree(area, 1.4f)) continue;
+
+            occupied.Add(area);
+            GameObject go = new GameObject("Castle");
+            go.transform.SetParent(facilitiesRoot, false);
+            go.transform.position = new Vector3(area.center.x, area.center.y, 0f);
+
+            Sprite image = ArtOverride.PickVariant(ArtKeys.Castle, null, (float)rng.NextDouble());
+            AddWholeBuilding(go.transform, ArtKeys.Castle, image, area, YOrder(area.center.y), "CastleImage");
+
+            BoxCollider2D collider = go.AddComponent<BoxCollider2D>();
+            collider.size = new Vector2(area.width * 0.9f, area.height * 0.82f);
+            if (map != null) map.AddAnchor("castle", area.center);
+            return;
+        }
     }
 
     /// <summary>
@@ -842,22 +1298,27 @@ public class VillageGenerator : MonoBehaviour
             go.transform.position = new Vector3(c.x, c.y, 0f);
 
             int order = YOrder(c.y);
-            AddSlice(go.transform, "Body", rectSprite, new Vector2(w, h), Vector2.zero,
-                new Color(0.82f, 0.76f, 0.62f), order, key: ArtKeys.WindmillBody);
 
-            // 四片叶片挂在同一个轮毂上，整体慢慢转（Spinner）
-            GameObject hub = new GameObject("Blades");
-            hub.transform.SetParent(go.transform, false);
-            hub.transform.localPosition = new Vector3(0f, h * 0.5f + 0.15f, 0f);
-            for (int i = 0; i < 4; i++)
+            // 整栋风车图（叶片也画在图上）：放了这张图就整栋用图，不再生成会转的叶片（会重复画两套叶片）
+            if (!AddWholeBuilding(go.transform, ArtKeys.Windmill, area, order))
             {
-                GameObject blade = new GameObject("Blade" + i);
-                blade.transform.SetParent(hub.transform, false);
-                blade.transform.localRotation = Quaternion.Euler(0f, 0f, i * 90f);
-                AddRect(blade.transform, "Blade", new Vector2(0.26f, 2.1f), new Vector2(0f, 1.05f),
-                    new Color(0.88f, 0.84f, 0.72f), order + 2, key: ArtKeys.WindmillBlade);
+                AddSlice(go.transform, "Body", rectSprite, new Vector2(w, h), Vector2.zero,
+                    new Color(0.82f, 0.76f, 0.62f), order, key: ArtKeys.WindmillBody);
+
+                // 四片叶片挂在同一个轮毂上，整体慢慢转（Spinner）
+                GameObject hub = new GameObject("Blades");
+                hub.transform.SetParent(go.transform, false);
+                hub.transform.localPosition = new Vector3(0f, h * 0.5f + 0.15f, 0f);
+                for (int i = 0; i < 4; i++)
+                {
+                    GameObject blade = new GameObject("Blade" + i);
+                    blade.transform.SetParent(hub.transform, false);
+                    blade.transform.localRotation = Quaternion.Euler(0f, 0f, i * 90f);
+                    AddRect(blade.transform, "Blade", new Vector2(0.26f, 2.1f), new Vector2(0f, 1.05f),
+                        new Color(0.88f, 0.84f, 0.72f), order + 2, key: ArtKeys.WindmillBlade);
+                }
+                hub.AddComponent<Spinner>().degreesPerSecond = Rand(22f, 42f);
             }
-            hub.AddComponent<Spinner>().degreesPerSecond = Rand(22f, 42f);
 
             BoxCollider2D collider = go.AddComponent<BoxCollider2D>();
             collider.size = new Vector2(w, h);
@@ -1137,14 +1598,19 @@ public class VillageGenerator : MonoBehaviour
             go.transform.position = new Vector3(c.x, c.y, 0f);
 
             int order = YOrder(c.y);
-            Color awning = Pick(StallColors);
-            AddRect(go.transform, "Counter", new Vector2(1.7f, 0.5f), new Vector2(0f, -0.3f), new Color(0.56f, 0.41f, 0.25f), order, key: ArtKeys.StallCounter);
-            AddRect(go.transform, "Awning", new Vector2(1.95f, 0.45f), new Vector2(0f, 0.35f), awning, order + 1, key: ArtKeys.StallAwning);
-            AddRect(go.transform, "PostL", new Vector2(0.12f, 0.9f), new Vector2(-0.92f, 0.05f), new Color(0.45f, 0.33f, 0.20f), order, key: ArtKeys.StallPost);
-            AddRect(go.transform, "PostR", new Vector2(0.12f, 0.9f), new Vector2(0.92f, 0.05f), new Color(0.45f, 0.33f, 0.20f), order, key: ArtKeys.StallPost);
-            AddDisc(go.transform, "Goods1", 0.3f, new Vector2(-0.5f, -0.1f), new Color(0.85f, 0.48f, 0.26f), order + 2, key: ArtKeys.StallGoods);
-            AddDisc(go.transform, "Goods2", 0.26f, new Vector2(0f, -0.08f), new Color(0.90f, 0.80f, 0.35f), order + 2, key: ArtKeys.StallGoods);
-            AddDisc(go.transform, "Goods3", 0.28f, new Vector2(0.5f, -0.1f), new Color(0.45f, 0.66f, 0.36f), order + 2, key: ArtKeys.StallGoods);
+
+            // 整栋棚子图（柜台 + 篷 + 货物一张图）：放了就整栋用图，不再拼那几件
+            if (!AddWholeBuilding(go.transform, ArtKeys.Stall, area, order))
+            {
+                Color awning = Pick(StallColors);
+                AddRect(go.transform, "Counter", new Vector2(1.7f, 0.5f), new Vector2(0f, -0.3f), new Color(0.56f, 0.41f, 0.25f), order, key: ArtKeys.StallCounter);
+                AddRect(go.transform, "Awning", new Vector2(1.95f, 0.45f), new Vector2(0f, 0.35f), awning, order + 1, key: ArtKeys.StallAwning);
+                AddRect(go.transform, "PostL", new Vector2(0.12f, 0.9f), new Vector2(-0.92f, 0.05f), new Color(0.45f, 0.33f, 0.20f), order, key: ArtKeys.StallPost);
+                AddRect(go.transform, "PostR", new Vector2(0.12f, 0.9f), new Vector2(0.92f, 0.05f), new Color(0.45f, 0.33f, 0.20f), order, key: ArtKeys.StallPost);
+                AddDisc(go.transform, "Goods1", 0.3f, new Vector2(-0.5f, -0.1f), new Color(0.85f, 0.48f, 0.26f), order + 2, key: ArtKeys.StallGoods);
+                AddDisc(go.transform, "Goods2", 0.26f, new Vector2(0f, -0.08f), new Color(0.90f, 0.80f, 0.35f), order + 2, key: ArtKeys.StallGoods);
+                AddDisc(go.transform, "Goods3", 0.28f, new Vector2(0.5f, -0.1f), new Color(0.45f, 0.66f, 0.36f), order + 2, key: ArtKeys.StallGoods);
+            }
 
             if (map != null) map.stalls.Add(new Vector2(c.x, c.y - 1.15f));   // 摊主站在柜台前
             return;
@@ -1310,11 +1776,35 @@ public class VillageGenerator : MonoBehaviour
             if (!IsFree(area, 1.0f)) continue;
 
             occupied.Add(area);
-            CreateHouse(area, housesRoot, type);
+            // 美术交了「杂项建筑」（house_extra：中世纪建筑包那类拆不出墙 / 门 / 窗的整图）时，
+            // 这一栋就改用整图盖 —— 同一片村庄里于是会混进几栋画风不一样的房子。
+            if (!BuildExtraHouse(area)) CreateHouse(area, housesRoot, type);
             if (map != null) map.houses.Add(new Vector2(area.center.x, area.yMin - 0.9f));   // 门口
             placed++;
             sinceLastPlaced = 0;
         }
+    }
+
+    /// <summary>
+    /// 用「杂项建筑」整图（<c>house_extra</c>）盖一栋房子，返回 false = 没有这种图、或者这次没抽中（那就盖普通房子）。
+    /// 同一个 key 放几张图就是几个变体，每栋自己挑一张（用生成器的确定性随机数，走远回头还是那几栋）。
+    /// </summary>
+    bool BuildExtraHouse(Rect area)
+    {
+        if (extraHouseChance <= 0f) return false;
+        if (ArtOverride.VariantCount(ArtKeys.HouseExtra) == 0) return false;
+        if (rng.NextDouble() >= extraHouseChance) return false;
+
+        GameObject go = new GameObject("House");
+        go.transform.SetParent(housesRoot, false);
+        go.transform.position = new Vector3(area.center.x, area.center.y, 0f);
+
+        Sprite image = ArtOverride.PickVariant(ArtKeys.HouseExtra, null, (float)rng.NextDouble());
+        AddWholeBuilding(go.transform, ArtKeys.HouseExtra, image, area, YOrder(area.center.y), "ExtraBuilding");
+
+        BoxCollider2D collider = go.AddComponent<BoxCollider2D>();
+        collider.size = new Vector2(area.width, area.height);
+        return true;
     }
 
     /// <summary>挤不下时换成小一号的房型（公寓 → 排屋 → 两层小楼 → 农舍）。</summary>
@@ -1372,6 +1862,20 @@ public class VillageGenerator : MonoBehaviour
         }
     }
 
+    /// <summary>这个房型的「整栋」key（玩家放了这个 key 的图，整栋房子就用那一张图，见 <see cref="AddWholeBuilding"/>）。</summary>
+    static string HouseWholeKey(HouseType type)
+    {
+        switch (type)
+        {
+            case HouseType.TwoStory: return ArtKeys.HouseTwoStory;
+            case HouseType.Barn: return ArtKeys.HouseBarn;
+            case HouseType.RowHouse: return ArtKeys.HouseRowHouse;
+            case HouseType.Cabin: return ArtKeys.HouseCabin;
+            case HouseType.Apartment: return ArtKeys.HouseApartment;
+            default: return ArtKeys.HouseCottage;
+        }
+    }
+
     /// <summary>屋顶 / 墙体的配色：沙漠只有土黄沙色，森林与草原用原来的调色板。</summary>
     Color RoofColor()
     {
@@ -1395,6 +1899,16 @@ public class VillageGenerator : MonoBehaviour
         go.transform.position = new Vector3(area.center.x, area.center.y, 0f);
 
         int order = YOrder(area.center.y);
+
+        // 整栋建筑一图替换：这个房型放了整栋图 → 直接画一整栋就收工。
+        // 墙 / 门 / 窗 / 烟囱都不再生成（图里都画好了），代价是窗子不会在夜里发亮（一张图亮不起来）。
+        if (AddWholeBuilding(go.transform, HouseWholeKey(type), area, order))
+        {
+            BoxCollider2D wholeCollider = go.AddComponent<BoxCollider2D>();
+            wholeCollider.size = new Vector2(area.width, area.height);
+            return go;
+        }
+
         Color roof = RoofColor();
         Color wall = WallColor();
         Color door = new Color(0.44f, 0.28f, 0.16f);
@@ -1562,6 +2076,30 @@ public class VillageGenerator : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 有「整棵树」素材（<see cref="ArtKeys.Tree"/>）时挑哪一张：下标 = 变体顺序 = 文件名结尾的数字
+    /// （<c>tree1.png</c> → 第 0 项、<c>tree2.png</c> → 第 1 项…）。**只影响整棵树素材**，
+    /// <c>tree_canopy</c> 那条老路不受影响。数值随便调：写几项就按几项算，没写的按 1 算。
+    /// </summary>
+    static float[] TreeVariantWeights(NatureKind nature)
+    {
+        switch (nature)
+        {
+            case NatureKind.Forest: return new[] { 0.15f, 0.25f, 0.45f, 0.15f };  // 森林：大树为主
+            case NatureKind.Desert: return new[] { 0.10f, 0.20f, 0.10f, 0.60f };  // 沙漠：只剩最瘦小的那棵
+            default: return new[] { 0.30f, 0.30f, 0.10f, 0.30f };                 // 草原：中等树为主，大树少
+        }
+    }
+
+    /// <summary>
+    /// 灌木按地貌换图：<c>bush1</c>（编号 1）= 草原、<c>bush2</c>（编号 2）= 森林。
+    /// 想对调就改这一行；只交了一张时另一片地貌也用它（<see cref="ArtOverride.Get(string, int)"/> 会退回第一个变体）。
+    /// </summary>
+    static int BushVariantNumber(NatureKind nature)
+    {
+        return nature == NatureKind.Forest ? 2 : 1;
+    }
+
     void CreateTree(Vector2 position)
     {
         GameObject go = new GameObject("Tree");
@@ -1570,16 +2108,32 @@ public class VillageGenerator : MonoBehaviour
 
         int order = YOrder(position.y);
         float size = nature == NatureKind.Forest ? Rand(2.0f, 3.2f) : Rand(1.7f, 2.7f);
-        Color canopy = nature == NatureKind.Forest ? Pick(ForestTreeColors) : Pick(TreeColors);
-
-        AddDisc(go.transform, "Shadow", size * 0.95f, new Vector2(0.06f, -0.08f), new Color(0f, 0f, 0f, 0.18f), order - 1);
-        AddDisc(go.transform, "Canopy", size, Vector2.zero, canopy, order, key: ArtKeys.TreeCanopy);
-        // 「内部高光」只是程序化树冠的受光面；玩家给了整棵树的树冠图就不再叠它
-        if (!ArtOverride.Has(ArtKeys.TreeCanopy))
-            AddDisc(go.transform, "CanopyInner", size * 0.58f, new Vector2(-size * 0.08f, size * 0.10f), Color.Lerp(canopy, Color.white, 0.22f), order + 1);
 
         CircleCollider2D collider = go.AddComponent<CircleCollider2D>();
-        collider.radius = size * 0.26f;
+
+        // 美术交了「整棵树」（tree1~4.png 这种整图）：整棵替换掉圆形树冠，按地貌权重挑一张
+        // （森林多大树、沙漠只剩最瘦的那棵），所以一片林子里不会每棵都长一样。
+        Sprite wholeTree = ArtOverride.PickVariant(ArtKeys.Tree, TreeVariantWeights(nature), (float)rng.NextDouble());
+        if (wholeTree != null)
+        {
+            // 影子和「内部高光」都是给圆形树冠凑数的：整图自带明暗，影子还会比树本身大一圈（红线 35），跳过
+            ArtShapes.AddWholeImage(go.transform, "Tree", wholeTree, size, Vector2.zero, order);
+
+            // 整图是「底边贴地」摆的（树干在下半截），碰撞体跟着挪到树干那一带，别挡住树冠上空
+            collider.radius = size * 0.22f;
+            collider.offset = new Vector2(0f, -(size * 0.5f - collider.radius));
+        }
+        else
+        {
+            Color canopy = nature == NatureKind.Forest ? Pick(ForestTreeColors) : Pick(TreeColors);
+            AddDisc(go.transform, "Shadow", size * 0.95f, new Vector2(0.06f, -0.08f), new Color(0f, 0f, 0f, 0.18f), order - 1);
+            AddDisc(go.transform, "Canopy", size, Vector2.zero, canopy, order, key: ArtKeys.TreeCanopy);
+            // 「内部高光」只是程序化树冠的受光面；玩家给了树冠图就不再叠它
+            if (!ArtOverride.Has(ArtKeys.TreeCanopy))
+                AddDisc(go.transform, "CanopyInner", size * 0.58f, new Vector2(-size * 0.08f, size * 0.10f), Color.Lerp(canopy, Color.white, 0.22f), order + 1);
+
+            collider.radius = size * 0.26f;
+        }
 
         HiddenValue hidden = go.AddComponent<HiddenValue>();
         hidden.value = RandInt(18, 31);
@@ -1644,12 +2198,22 @@ public class VillageGenerator : MonoBehaviour
 
         int order = YOrder(position.y);
         float size = Rand(0.8f, 1.35f);
-        Color color = nature == NatureKind.Forest ? new Color(0.18f, 0.32f, 0.16f) : new Color(0.28f, 0.42f, 0.20f);
-        AddDisc(go.transform, "Shadow", size * 0.85f, new Vector2(0.05f, -0.07f), new Color(0f, 0f, 0f, 0.15f), order - 1);
-        AddDisc(go.transform, "Body", size, Vector2.zero, color, order, key: ArtKeys.Bush);
 
         CircleCollider2D collider = go.AddComponent<CircleCollider2D>();
         collider.radius = size * 0.3f;
+
+        // 灌木的整图：草原用 bush1、森林用 bush2（见 BushVariantNumber）
+        Sprite whole = ArtOverride.Get(ArtKeys.Bush, BushVariantNumber(nature));
+        if (whole != null)
+        {
+            ArtShapes.AddWholeImage(go.transform, "Body", whole, size, Vector2.zero, order);
+        }
+        else
+        {
+            Color color = nature == NatureKind.Forest ? new Color(0.18f, 0.32f, 0.16f) : new Color(0.28f, 0.42f, 0.20f);
+            AddDisc(go.transform, "Shadow", size * 0.85f, new Vector2(0.05f, -0.07f), new Color(0f, 0f, 0f, 0.15f), order - 1);
+            AddDisc(go.transform, "Body", size, Vector2.zero, color, order, key: ArtKeys.Bush);
+        }
 
         HiddenValue hidden = go.AddComponent<HiddenValue>();
         hidden.value = RandInt(6, 14);
@@ -1971,11 +2535,23 @@ public class VillageGenerator : MonoBehaviour
         GameObject visual = new GameObject("Visual");
         visual.transform.SetParent(go.transform, false);
 
-        Color shirt = VillagerJobs.Shirt(job);
-        shirt = Color.Lerp(shirt, rng.NextDouble() < 0.5 ? Color.white : Color.black, Rand(0.02f, 0.15f));
-        Color skin = Pick(SkinColors);
-        AddRect(visual.transform, "Body", new Vector2(0.40f, 0.52f), new Vector2(0f, -0.12f), shirt, 0, key: ArtKeys.VillagerBody);
-        AddDisc(visual.transform, "Head", 0.36f, new Vector2(0f, 0.30f), skin, 1, key: ArtKeys.VillagerHead);
+        // 美术交了「整身村民」（man1~7 / woman1~4 这种一张图画完整个人的）就整身替换掉「方块身子 + 圆头」：
+        // 每个村民按区块确定性随机挑一张变体（同一片村子里不会所有人都长一样），**图原样显示、不染职业色**。
+        Sprite wholeVillager = ArtOverride.PickVariant(ArtKeys.Villager, null, (float)rng.NextDouble());
+        if (wholeVillager != null)
+        {
+            // 底边贴地：和原来「身子 + 头」的脚底对齐，换图之后脚还站在地上
+            Vector2 wholePos = new Vector2(0f, villagerFootY + villagerVisualHeight * 0.5f);
+            ArtShapes.AddWholeImage(visual.transform, "Villager", wholeVillager, villagerVisualHeight, wholePos, 0);
+        }
+        else
+        {
+            Color shirt = VillagerJobs.Shirt(job);
+            shirt = Color.Lerp(shirt, rng.NextDouble() < 0.5 ? Color.white : Color.black, Rand(0.02f, 0.15f));
+            Color skin = Pick(SkinColors);
+            AddRect(visual.transform, "Body", new Vector2(0.40f, 0.52f), new Vector2(0f, -0.12f), shirt, 0, key: ArtKeys.VillagerBody);
+            AddDisc(visual.transform, "Head", 0.36f, new Vector2(0f, 0.30f), skin, 1, key: ArtKeys.VillagerHead);
+        }
 
         Villager villager = go.AddComponent<Villager>();
         villager.job = job;
@@ -2022,6 +2598,12 @@ public class VillageGenerator : MonoBehaviour
     // 村民反应时长的基础值（再乘体魄倍率）
     public float reactMinBase = 3f;
     public float reactMaxBase = 6f;
+
+    // 整身村民图（`villager` key）的占地高度与脚底位置：默认对齐原来「方块身子 + 圆头」那套（总高 0.86、脚底 −0.38）
+    [Tooltip("整身村民图的高度（世界单位）")]
+    public float villagerVisualHeight = 0.86f;
+    [Tooltip("整身村民图的脚底 Y（默认和原来「身子 + 头」的脚底一致，换图之后脚还站在地上）")]
+    public float villagerFootY = -0.38f;
 
     // ---------------- 玩家 ----------------
 

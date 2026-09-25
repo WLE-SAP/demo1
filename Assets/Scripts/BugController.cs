@@ -9,7 +9,7 @@ public class BugController : MonoBehaviour
     [Header("移动")]
     [Tooltip("移动速度（单位/秒）")]
     public float walkSpeed = 4f;
-    [Tooltip("搬运物品时的速度倍率")]
+    [Tooltip("搬运物品时的速度倍率（搬的东西自带了倍率时以它为准，见 Draggable.speedMultiplier）")]
     public float dragSpeedMultiplier = 0.4f;
     public float acceleration = 26f;
     [Tooltip("到达目标点的判定半径")]
@@ -97,9 +97,21 @@ public class BugController : MonoBehaviour
         set { isDragging = value; }
     }
 
+    /// <summary>
+    /// 手里那件东西自带的速度倍率（&lt;= 0 = 用 <see cref="dragSpeedMultiplier"/>）。
+    /// 由 <see cref="DragController"/> 在拾取 / 放下时写 —— 越大的石头给得越小，所以搬大石头明显更慢。
+    /// </summary>
+    public float HeldSpeedMultiplier { get; set; }
+
+    /// <summary>搬运时的实际速度倍率（物品自己带了就用物品的）。</summary>
+    public float CarrySpeedMultiplier
+    {
+        get { return HeldSpeedMultiplier > 0.01f ? HeldSpeedMultiplier : dragSpeedMultiplier; }
+    }
+
     public Vector2 Velocity { get { return velocity; } }
     public float CurrentSpeed { get { return velocity.magnitude; } }
-    public float TargetSpeed { get { return isDragging ? walkSpeed * dragSpeedMultiplier : walkSpeed; } }
+    public float TargetSpeed { get { return isDragging ? walkSpeed * CarrySpeedMultiplier : walkSpeed; } }
     /// <summary>头部朝向（单位向量）。</summary>
     public Vector2 Facing { get { return facing; } }
     public bool HasDestination { get { return hasDestination; } }

@@ -124,6 +124,14 @@ public class Villager : MonoBehaviour
     [Tooltip("被冻结时连精灵渲染一起关掉，进一步省资源")]
     public bool freezeVisuals = true;
 
+    [Header("头顶表情（emoji_* 的图）")]
+    [Tooltip("表情气泡的大小（世界单位，按图的宽高比缩放）；0 = 不显示")]
+    public float emojiSize = 0.46f;
+    [Tooltip("表情挂在头顶多高（原来那个程序化的「!」在 0.62）")]
+    public float emojiHeight = 0.9f;
+    [Tooltip("「刚进入某个状态」时冒的表情显示多久（秒），到点自己消失")]
+    public float emojiSeconds = 1.6f;
+
     [Header("移动")]
     public float moveSpeed = 1.6f;
     public float acceleration = 12f;
@@ -181,6 +189,14 @@ public class Villager : MonoBehaviour
     float nextHearTime;
     int searchLeft;
     Transform alertMark;
+
+    // ---- 头顶的表情（一个槽位：听动静的「!」优先，其次是刚进入状态时冒的表情，见 UpdateAlertMark）----
+    SpriteRenderer emojiRenderer;
+    /// <summary>现在这个槽里显示的是哪个 key（null = 什么都没显示）。</summary>
+    string emojiKey;
+    /// <summary>「刚进入某个状态」要冒的表情，以及它到什么时候消失。</summary>
+    string stateEmojiKey;
+    float stateEmojiUntil;
     /// <summary>这个时间点之前不会再滑倒（刚爬起来的人不会立刻又摔）。</summary>
     float nextSlipTime;
 
@@ -307,6 +323,7 @@ public class Villager : MonoBehaviour
         // 现场就翻脸：放下手里的事，立刻往反方向跑
         RefreshFleeTarget();
         SetState(VillagerState.Flee, RandomRange(reactMin, reactMax) * afraidFleeBonus);
+        Grieve();          // 盖上「心碎」，比 Flee 的一般表情持续更久（放在 SetState 之后才不会被顶掉）
     }
 
     /// <summary>是否被冻结（离玩家太远，停掉状态机与物理）。</summary>
@@ -405,8 +422,9 @@ public class Villager : MonoBehaviour
         visual = transform.Find("Visual");
         if (visual != null) visualBaseScale = visual.localScale;
 
-        // 头顶的「!」要在缓存渲染器之前建好，这样它也算进「冻结时一起关渲染」的范围里
+        // 头顶的「!」与表情要在缓存渲染器之前建好，这样它们也算进「冻结时一起关渲染」的范围里
         BuildAlertMark();
+        BuildEmoji();
         visualRenderers = GetComponentsInChildren<SpriteRenderer>(true);
 
         clock = VillageClock.Instance != null ? VillageClock.Instance : FindObjectOfType<VillageClock>();
@@ -422,6 +440,7 @@ public class Villager : MonoBehaviour
     void Update()
     {
         UpdateVisual();
+        UpdateAlertMark();          // 头顶表情有寿命，得每帧刷（只有「该显示哪张」变了才动渲染器）
 
         // 正在处理异常（起疑 / 查看 / 搜索 / 追 / 躲 / 被电麻）时，换班了也先把手上这件事做完
         bool handlingSomething = state == VillagerState.Commute || state == VillagerState.Chase ||
@@ -823,7 +842,104 @@ public class Villager : MonoBehaviour
     /// <summary>按当前状态刷新头顶提示（起疑 / 去看 / 翻找的时候才显示）。</summary>
     void UpdateAlertMark()
     {
-        SetAlertMark(IsReactingToNoise || IsHeadingToNoise);
+        // 头顶只有**一个槽位**，优先级：听到动静的「!」 > 刚进入状态时冒的表情 > 不显示。
+        // 每帧都跑：状态表情是有寿命的，到点要自己消失（但只有「该显示哪张」变了才动渲染器）。
+        string want = null;
+        if (IsReactingToNoise || IsHeadingToNoise) want = ArtKeys.EmojiExclamation;
+        else if (stateEmojiKey != null && Time.time < stateEmojiUntil) want = stateEmojiKey;
+        SetEmoji(want);
+    }
+
+    /// <summary>
+    /// 头顶的表情气泡。美术在 <c>emoji_*</c> 下放一张图就有一张脸（见 <see cref="ArtKeys"/>）；
+    /// 尺寸走 <c>SpriteRenderer.size</c>，所以和导入的 PPU 无关，要多大改 <see cref="emojiSize"/>。
+    /// 没交图时：「!」退回程序化画的黄方块（<see cref="BuildAlertMark"/>），其它表情直接不显示。
+    /// </summary>
+    void BuildEmoji()
+    {
+        GameObject root = new GameObject("Emoji");
+        root.transform.SetParent(transform, false);
+        root.transform.localPosition = new Vector3(0f, emojiHeight, 0f);
+
+        GameObject bubble = new GameObject("Bubble");
+        bubble.transform.SetParent(root.transform, false);
+        emojiRenderer = bubble.AddComponent<SpriteRenderer>();
+        emojiRenderer.color = Color.white;
+        emojiRenderer.sortingOrder = 6;
+        emojiRenderer.enabled = false;
+    }
+
+    void SetEmoji(string key)
+    {
+        if (key == emojiKey) return;               // 没变就不动：避免每帧切贴图
+        emojiKey = key;
+
+        Sprite sprite = string.IsNullOrEmpty(key) ? null : ArtOverride.Get(key);
+        if (sprite == null)
+        {
+            // 这张没交图：「!」还能退回程序化画的那个，其它表情就干脆不显示
+            if (emojiRenderer != null) emojiRenderer.enabled = false;
+            SetAlertMark(key == ArtKeys.EmojiExclamation);
+            return;
+        }
+
+        SetAlertMark(false);
+        if (emojiRenderer == null) return;
+
+        float aspect = sprite.rect.width / Mathf.Max(1f, sprite.rect.height);
+        emojiRenderer.sprite = sprite;
+        emojiRenderer.drawMode = SpriteDrawMode.Sliced;
+        emojiRenderer.size = new Vector2(emojiSize * aspect, emojiSize);
+        emojiRenderer.enabled = emojiSize > 0.001f;
+    }
+
+    /// <summary>进入某个状态时冒一下表情（过 <see cref="emojiSeconds"/> 秒自己消失）。传空 = 不冒。</summary>
+    void ShowStateEmoji(string[] keys)
+    {
+        if (keys == null || keys.Length == 0) return;
+        stateEmojiKey = keys.Length == 1 ? keys[0] : keys[Random.Range(0, keys.Length)];
+        stateEmojiUntil = Time.time + emojiSeconds;
+    }
+
+    // 每个状态冒哪几张表情（多张 = 随机挑一张，同一种状态也不至于每次都同一张脸）。
+    // 表是静态的：状态切换时才查，不在 Update 里分配。
+    static readonly string[] EmojiChase = { ArtKeys.EmojiAngry };
+    static readonly string[] EmojiFlee = { ArtKeys.EmojiNo, ArtKeys.EmojiSad, ArtKeys.EmojiHeartBroken };
+    static readonly string[] EmojiHurt = { ArtKeys.EmojiDizzy };
+    static readonly string[] EmojiAlert = { ArtKeys.EmojiExclamation };
+    static readonly string[] EmojiLook = { ArtKeys.EmojiBulb };
+    static readonly string[] EmojiSearch = { ArtKeys.EmojiConfused };
+    static readonly string[] EmojiChat = { ArtKeys.EmojiHaha, ArtKeys.EmojiLove, ArtKeys.EmojiHappy };
+    static readonly string[] EmojiPlay = { ArtKeys.EmojiHappy, ArtKeys.EmojiHaha };
+    static readonly string[] EmojiRecover = { ArtKeys.EmojiSpeechless, ArtKeys.EmojiAshamed };
+    static readonly string[] EmojiWork = { ArtKeys.EmojiSleepy };
+    static readonly string[] EmojiGrief = { ArtKeys.EmojiHeartBroken };
+
+    /// <summary>这个状态该冒哪几张表情（null = 不冒）。</summary>
+    static string[] EmojiFor(VillagerState state)
+    {
+        switch (state)
+        {
+            case VillagerState.Chase: return EmojiChase;
+            case VillagerState.Flee: return EmojiFlee;
+            case VillagerState.Stunned: return EmojiHurt;
+            case VillagerState.Slip: return EmojiHurt;
+            case VillagerState.Alert: return EmojiAlert;
+            case VillagerState.Investigate: return EmojiLook;
+            case VillagerState.Search: return EmojiSearch;
+            case VillagerState.Socialize: return EmojiChat;
+            case VillagerState.Play: return EmojiPlay;
+            case VillagerState.Recover: return EmojiRecover;
+            case VillagerState.Work: return EmojiWork;
+            default: return null;      // 发呆 / 赶路不冒表情
+        }
+    }
+
+    /// <summary>亲眼看到同伴被吃掉：冒一个心碎（只有真的看过的人才会被叫到这里）。</summary>
+    public void Grieve()
+    {
+        ShowStateEmoji(EmojiGrief);
+        stateEmojiUntil = Time.time + emojiSeconds * 1.6f;
     }
 
     void SetAlertMark(bool visible)
@@ -929,6 +1045,7 @@ public class Villager : MonoBehaviour
     {
         state = next;
         stateTimer = duration;
+        ShowStateEmoji(EmojiFor(next));
         UpdateAlertMark();
         GameEvent.RaiseStateChanged(this);
     }

@@ -182,6 +182,36 @@ public static class WorldBiome
         }
     }
 
+    /// <summary>
+    /// 这个聚落的**路面宽度**。是**纯函数**（只看聚落），因为「路口瓦片要多大」要从它反推
+    /// （瓦片图里路面只占画布的一部分，见 <c>VillageGenerator.RoadTileRoadRatio</c>），
+    /// 而瓦片模式要能对**邻居区块**（还没生成的那个）算路型 —— 所以别在别处再写一份数值。
+    ///
+    /// **2026-09-25 用户反馈「路太粗」→ 整体收窄约 40%（原来是 2.4 / 3.4 / 4.2）**：
+    /// 小虫只有 0.4× 原始尺寸、相机视野 16.8×29.9 世界单位，路宽相对屏幕本来是 20% 高，太抢眼。
+    /// 想让路再细 / 再粗**只改这三个数**：路口瓦片尺寸、占位走廊、作坊离路的距离、巡逻取样点全都跟着走。
+    /// </summary>
+    public static float RoadWidthOf(SettlementKind settlement)
+    {
+        switch (settlement)
+        {
+            case SettlementKind.Wilderness: return 1.5f;   // 荒野：窄土路
+            case SettlementKind.City: return 2.6f;         // 城市：宽一点，但没到以前那么宽
+            default: return 2.0f;                          // 农村
+        }
+    }
+
+    /// <summary>这个聚落「一个区块有没有路」的几率（**纯函数**，同上：邻居区块也按它算）。</summary>
+    public static float RoadChanceOf(SettlementKind settlement)
+    {
+        switch (settlement)
+        {
+            case SettlementKind.City: return 1f;
+            case SettlementKind.Wilderness: return 0.45f;
+            default: return 0.88f;
+        }
+    }
+
     // ---------------- 世界流式加载（按当前区块的聚落取值） ----------------
 
     /// <summary>要不要「保证视野里有人」（荒野不补人，人少才像荒野）。</summary>
@@ -256,15 +286,15 @@ public static class WorldBiome
                 g.windmillChance = 0f;
                 g.bellTowerChance = 0f;
                 g.campfireChance = 0.4f;
-                g.roadWidth = 2.4f;
-                g.roadChance = 0.45f;                    // 大半区块根本没有路
+                g.roadWidth = RoadWidthOf(settlement);
+                g.roadChance = RoadChanceOf(settlement);   // 大半区块根本没有路
                 break;
 
             case SettlementKind.City:
-                // 注意：城市名义上是 6~9 栋（乘 1.8 密度后 11~16），但地块被宽路面 + 广场 + 设施切碎，
-                // 大公寓塞不进碎地块，实测每个区块落在 8 栋左右（`VillageGenerator.BuildHouses` 会
-                // 「挤不下就把房型降小一号」）。想更密就调小 BuildHouses 里的 IsFree 余量。
-                g.houseMin = 6; g.houseMax = 9;
+                // 名义 8~12 栋（乘 `Density` 1.8 → 14~22）。城市地块被路面 + 设施切碎、大公寓塞不进，
+                // `VillageGenerator.BuildHouses` 会「挤不下就把房型降小一号」，实测落在 10~14 栋左右。
+                // **2026-09-25 用户「房屋密度不够」→ 农村 3~5 → 5~8、城市 6~9 → 8~12**（都再乘 1.8）。
+                g.houseMin = 8; g.houseMax = 12;
                 g.treeMin = 3; g.treeMax = 7;            // 城里没多少树
                 g.bushMin = 0; g.bushMax = 2;
                 g.foodSlotsMin = 8; g.foodSlotsMax = 12;
@@ -278,8 +308,8 @@ public static class WorldBiome
                 g.windmillChance = 0f;
                 g.bellTowerChance = 0.35f;
                 g.campfireChance = 0f;
-                g.roadWidth = 4.2f;
-                g.roadChance = 1f;
+                g.roadWidth = RoadWidthOf(settlement);
+                g.roadChance = RoadChanceOf(settlement);
                 g.farmChance = 0.1f;                     // 城里几乎没有农田
                 g.penChance = 0.05f;
                 g.bakeryChance = 0.35f;
@@ -291,7 +321,7 @@ public static class WorldBiome
                 break;
 
             default:                                     // 农村
-                g.houseMin = 3; g.houseMax = 5;
+                g.houseMin = 5; g.houseMax = 8;          // 名义 5~8（乘 Density 1.8 → 9~14 栋）
                 g.treeMin = 10; g.treeMax = 16;
                 g.bushMin = 2; g.bushMax = 5;
                 g.foodSlotsMin = 5; g.foodSlotsMax = 8;
@@ -305,8 +335,8 @@ public static class WorldBiome
                 g.windmillChance = 0.3f;
                 g.bellTowerChance = 0.06f;
                 g.campfireChance = 0f;
-                g.roadWidth = 3.4f;
-                g.roadChance = 0.88f;
+                g.roadWidth = RoadWidthOf(settlement);
+                g.roadChance = RoadChanceOf(settlement);
                 g.farmChance = 0.7f;
                 g.penChance = 0.35f;
                 g.bakeryChance = 0.22f;

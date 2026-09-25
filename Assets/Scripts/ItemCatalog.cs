@@ -29,6 +29,20 @@ public class ItemDefinition : IContentDefinition
     /// <summary>按九宫格（Sliced）拉伸，配合下面的大小范围使用。</summary>
     public bool sliced = true;
 
+    /// <summary>
+    /// <see cref="artKey"/> 是**整图素材**（石头这种「一张图 = 一个完整物件」）时打开：
+    /// 图片按内容比例装进 <see cref="sizeMin"/>~<see cref="sizeMax"/> 的占地、底边贴地
+    /// （见 <see cref="ArtShapes.AddWholeImage"/>），而不是按图元那样整体缩放。
+    /// 整图素材在导入时会自动裁掉透明边，所以物体大小和程序化图元一致。
+    /// </summary>
+    public bool wholeArt;
+
+    /// <summary>
+    /// 整图有多张变体时，**按地貌**给这几张的权重（下标 = 变体顺序 = 文件名结尾的数字）：
+    /// 例如石头沙漠里用土黄那张、森林里用灰色那张。null = 均匀抽。
+    /// </summary>
+    public System.Func<NatureKind, float[]> variantWeights;
+
     /// <summary>大小范围（世界单位，每次生成随机取一个）。</summary>
     public float sizeMin = 0.6f;
     public float sizeMax = 0.9f;
@@ -45,6 +59,12 @@ public class ItemDefinition : IContentDefinition
 
     /// <summary>搬运迟滞：数值越大越不跟手（<see cref="Draggable.weight"/>）。</summary>
     public float carryWeight = 1f;
+
+    /// <summary>
+    /// 搬着它走路的速度倍率（越小越慢）：覆盖 <see cref="BugController.dragSpeedMultiplier"/>
+    /// 那个全局默认值，所以「越大的石头搬起来越慢」可以逐件写死。&lt;= 0 = 用默认值。
+    /// </summary>
+    public float carrySpeedMultiplier = -1f;
 
     /// <summary>能不能吃（挂了 <see cref="Edible"/>）。</summary>
     public bool edible;
@@ -200,18 +220,29 @@ public static class ItemCatalog
 
         float size = Mathf.Max(0.05f, Random.Range(definition.sizeMin, Mathf.Max(definition.sizeMin, definition.sizeMax)));
 
-        // 「逻辑在根上、外观在 Visual 子物体上」
-        GameObject visual = new GameObject("Visual");
-        visual.transform.SetParent(go.transform, false);
-        visual.transform.localScale = Vector3.one * size;
+        SpriteRenderer sr;
+        Sprite wholeArt = definition.wholeArt ? PickWholeArt(definition, position) : null;
+        if (wholeArt != null)
+        {
+            // 整图素材（石头这类）：按内容比例把图摆进 size × size 的占地、底边贴地。
+            // 地图放在「Visual」子物体上，和下面那条路保持同一套结构（逻辑在根上、外观在 Visual 上）。
+            sr = ArtShapes.AddWholeImage(go.transform, "Visual", wholeArt, size, Vector2.zero, yOrder + definition.orderOffset);
+        }
+        else
+        {
+            // 「逻辑在根上、外观在 Visual 子物体上」（缩放 = 物体大小）
+            GameObject visual = new GameObject("Visual");
+            visual.transform.SetParent(go.transform, false);
+            visual.transform.localScale = Vector3.one * size;
 
-        SpriteRenderer sr = visual.AddComponent<SpriteRenderer>();
-        sr.sprite = definition.sprite != null ? definition.sprite : ArtShapes.Get(definition.shape);
-        sr.drawMode = definition.sliced ? SpriteDrawMode.Sliced : SpriteDrawMode.Simple;
-        if (definition.sliced) sr.size = Vector2.one;
-        sr.color = definition.color;
-        sr.sortingOrder = yOrder + definition.orderOffset;
-        if (!string.IsNullOrEmpty(definition.artKey)) ArtOverride.Apply(sr, definition.artKey);
+            sr = visual.AddComponent<SpriteRenderer>();
+            sr.sprite = definition.sprite != null ? definition.sprite : ArtShapes.Get(definition.shape);
+            sr.drawMode = definition.sliced ? SpriteDrawMode.Sliced : SpriteDrawMode.Simple;
+            if (definition.sliced) sr.size = Vector2.one;
+            sr.color = definition.color;
+            sr.sortingOrder = yOrder + definition.orderOffset;
+            if (!string.IsNullOrEmpty(definition.artKey)) ArtOverride.Apply(sr, definition.artKey);
+        }
 
         BoxCollider2D collider = go.AddComponent<BoxCollider2D>();
         collider.size = Vector2.one * size;
@@ -221,7 +252,9 @@ public static class ItemCatalog
             Rigidbody2D body = go.AddComponent<Rigidbody2D>();
             body.bodyType = RigidbodyType2D.Kinematic;
             body.gravityScale = 0f;
-            go.AddComponent<Draggable>().weight = definition.carryWeight;
+            Draggable draggable = go.AddComponent<Draggable>();
+            draggable.weight = definition.carryWeight;
+            draggable.speedMultiplier = definition.carrySpeedMultiplier;
         }
 
         HiddenValue hidden = go.AddComponent<HiddenValue>();
@@ -251,6 +284,24 @@ public static class ItemCatalog
         if (definition.useYSort) go.AddComponent<YSort>();
         if (definition.decorate != null) definition.decorate(go);
         return go;
+    }
+
+    /// <summary>
+    /// 有整图素材就挑一张变体（例如石头：沙漠用土黄那张、森林用灰色那张）；
+    /// 没有整图时返回 null，走程序化图元。
+    ///
+    /// 随机源是**位置哈希**（<see cref="SpawnContext.Roll01"/>）而不是 UnityEngine.Random：
+    /// 同一个位置 + 同一个区块种子永远得到同一个值，所以**同一块地方**走远再回头、读档回来还是同一个样子。
+    /// （物件本身落在哪由「这块地空不空」决定，那部分和其它内容一样不是严格的纯函数。
+    /// 另外物品的**大小**目前还是走 UnityEngine.Random，重复生成会变 —— 见 Spec §4.13 的遗留项。）
+    /// </summary>
+    static Sprite PickWholeArt(ItemDefinition definition, Vector2 position)
+    {
+        if (string.IsNullOrEmpty(definition.artKey)) return null;
+        if (ArtOverride.VariantCount(definition.artKey) == 0) return null;
+
+        float[] weights = definition.variantWeights != null ? definition.variantWeights(SpawnContext.Nature) : null;
+        return ArtOverride.PickVariant(definition.artKey, weights, SpawnContext.Roll01(position, 7717));
     }
 
     static string IdList()

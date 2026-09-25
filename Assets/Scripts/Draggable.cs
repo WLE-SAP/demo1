@@ -8,6 +8,10 @@ public class Draggable : MonoBehaviour
     [Tooltip("重量：数值越大拖动越迟滞")]
     public float weight = 1f;
 
+    [Tooltip("搬着它走路的速度倍率（越小越慢）：<= 0 = 用 BugController 上的默认值。"
+        + "用来做「越大的石头搬起来越慢」这种逐件手感")]
+    public float speedMultiplier = -1f;
+
     /// <summary>被震飞后多久收回「固定不动」的默认时长。</summary>
     public const float DefaultSettleSeconds = 0.9f;
 

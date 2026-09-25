@@ -582,7 +582,7 @@ MonoBehaviour:
   m_fontMaterials: []
   m_fontColor32:
     serializedVersion: 2
-    rgba: 4294967295
+    rgba: 4290310399
   m_fontColor: {r: 1, g: 0.94, b: 0.72, a: 1}
   m_enableVertexGradient: 0
   m_colorMode: 3
@@ -595,7 +595,7 @@ MonoBehaviour:
   m_spriteAsset: {fileID: 0}
   m_tintAllSprites: 0
   m_StyleSheet: {fileID: 0}
-  m_TextStyleHashCode: 0
+  m_TextStyleHashCode: -1183493901
   m_overrideHtmlColors: 0
   m_faceColor:
     serializedVersion: 2
@@ -852,36 +852,63 @@ MonoBehaviour:
   chunkSize: 32
   autoGenerateOnStart: 0
   seed: 20260922
-  roadWidth: 3.4
+  roadWidth: 2
   plazaSize: 10
-  hamletChance: 0.65
-  houseMin: 3
-  houseMax: 5
-  treeMin: 10
-  treeMax: 16
-  foodMin: 5
-  foodMax: 8
-  crateMax: 2
+  roadRunLength: 2
+  useRoadTiles: 1
+  roadTilesEverywhere: 0
+  roadTileRoadRatio: 0.28125
+  roadHeadTipRatio: 0.7
+  groundFeatherWidth: 3
+  groundFeatherSteps: 4
+  plazaFeatherWidth: 1.6
+  plazaFeatherSteps: 4
+  houseMin: 5
+  houseMax: 9
+  treeMin: 2
+  treeMax: 4
+  bushMin: 0
+  bushMax: 0
+  cactusMin: 5
+  cactusMax: 13
+  deadTreeMin: 4
+  deadTreeMax: 7
+  foodSlotsMin: 11
+  foodSlotsMax: 16
+  itemSlotsMin: 1
+  itemSlotsMax: 4
   villagerMin: 2
   villagerMax: 4
   burrowMin: 0
   burrowMax: 2
   tunnelChance: 0.45
-  specialFoodChance: 0.45
   buildFacilities: 1
-  farmChance: 0.7
-  penChance: 0.35
-  bakeryChance: 0.22
-  smithyChance: 0.22
-  stallChance: 0.8
-  gardenChance: 0.7
-  boardChance: 0.4
+  roadChance: 0.88
+  plazaChance: 0.55
+  wellChance: 0.55
+  fountainChance: 0
+  farmChance: 0.252
+  penChance: 0.063
+  bakeryChance: 0.396
+  smithyChance: 0.396
+  powerPlantChance: 0.54
+  windmillChance: 0.09
+  bellTowerChance: 0.06
+  campfireChance: 0
+  oasisChance: 0.18
+  stallChance: 1
+  gardenChance: 0.44099998
+  boardChance: 0.71999997
+  extraHouseChance: 0.18
+  castleChance: 0.08
   map: {fileID: 957318754}
   player: {fileID: 1683799118}
   playerSpawn: {x: 0, y: -3.4}
   placePlayerOnFirstChunk: 1
   reactMinBase: 3
   reactMaxBase: 6
+  villagerVisualHeight: 0.86
+  villagerFootY: -0.38
 --- !u!4 &957318752
 Transform:
   m_ObjectHideFlags: 0
@@ -924,12 +951,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 861631235d4c3b841bca751d084b74cb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  hasBakery: 0
-  bakery: {x: 0, y: 0}
+  hasBakery: 1
+  bakery: {x: -25.03835, y: -106.968605}
   hasSmithy: 0
   smithy: {x: 0, y: 0}
-  hasBoard: 0
-  board: {x: 0, y: 0}
+  hasBoard: 1
+  board: {x: -34.872448, y: -89.4344}
 --- !u!114 &957318755
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -950,16 +977,12 @@ MonoBehaviour:
   worldSeed: 20260922
   randomSeedEachRun: 1
   streamInterval: 0.25
-  mapKind: 1
   freezeFarVillagers: 1
-  freezeRadius: 26
   freezeCheckInterval: 0.5
   tunnelMinGap: 24
   tunnelMaxGap: 110
-  keepVillagersInView: 1
-  minVillagersInView: 2
   viewHalfSize: {x: 13, y: 7.5}
-  maxExtraPerChunk: 4
+  extraMinVillagers: 0
 --- !u!1 &1113561683
 GameObject:
   m_ObjectHideFlags: 0
@@ -1114,16 +1137,26 @@ MonoBehaviour:
   helpPanel: {fileID: 439738534}
   statusPanel: {fileID: 1334768330}
   panelGap: 10
+  helpPadding: 28
+  statusPadding: 20
   staminaBar: {fileID: 817292619}
   staminaFill: {fileID: 1275621063}
   staminaBarWidth: 460
+  staminaWidthPerLevel: 110
+  staminaBottomMargin: 40
+  meterBarHeight: 18
+  meterGap: 7
+  lowStaminaBlinkSpeed: 4
   bug: {fileID: 1683799119}
   eat: {fileID: 1683799117}
   interact: {fileID: 1159796541}
   autoSave: {fileID: 1159796546}
   vitality: {fileID: 1683799124}
   growth: {fileID: 1683799123}
+  world: {fileID: 0}
+  abilitySet: {fileID: 0}
   refreshInterval: 0.2
+  noticeRadius: 12
 --- !u!114 &1159796541
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1227,6 +1260,7 @@ MonoBehaviour:
   world: {fileID: 0}
   vitality: {fileID: 1683799124}
   growth: {fileID: 1683799123}
+  abilities: {fileID: 0}
 --- !u!1 &1172602321
 GameObject:
   m_ObjectHideFlags: 0
@@ -1309,7 +1343,7 @@ MonoBehaviour:
   m_spriteAsset: {fileID: 0}
   m_tintAllSprites: 0
   m_StyleSheet: {fileID: 0}
-  m_TextStyleHashCode: 0
+  m_TextStyleHashCode: -1183493901
   m_overrideHtmlColors: 0
   m_faceColor:
     serializedVersion: 2
@@ -1869,7 +1903,7 @@ MonoBehaviour:
   m_spriteAsset: {fileID: 0}
   m_tintAllSprites: 0
   m_StyleSheet: {fileID: 0}
-  m_TextStyleHashCode: 0
+  m_TextStyleHashCode: -1183493901
   m_overrideHtmlColors: 0
   m_faceColor:
     serializedVersion: 2
@@ -2148,6 +2182,7 @@ MonoBehaviour:
   startStamina: 100
   drainPerSecond: 0.8
   deathDelay: 1.8
+  settlementSeconds: 7
   respawnRatio: 0.6
   menuSceneName: MainMenu
 --- !u!1 &1689321048
@@ -2232,7 +2267,7 @@ MonoBehaviour:
   m_spriteAsset: {fileID: 0}
   m_tintAllSprites: 0
   m_StyleSheet: {fileID: 0}
-  m_TextStyleHashCode: 0
+  m_TextStyleHashCode: -1183493901
   m_overrideHtmlColors: 0
   m_faceColor:
     serializedVersion: 2
@@ -2349,7 +2384,7 @@ Canvas:
   m_SortingBucketNormalizedSize: 0
   m_VertexColorAlwaysGammaSpace: 0
   m_AlwaysInGammaSpace: 0
-  m_AdditionalShaderChannelsFlag: 0
+  m_AdditionalShaderChannelsFlag: 25
   m_UpdateRectTransformForStandalone: 0
   m_SortingLayerID: 0
   m_SortingOrder: 0

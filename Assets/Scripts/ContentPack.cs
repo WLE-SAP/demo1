@@ -27,7 +27,8 @@ public static class ContentPack
 
         Debug.Log("[Content] 按地貌 / 聚落分家：新增食物 " + (FoodCatalog.All.Count - foodBefore)
             + " 种（蘑菇 / 松果 = 森林，仙人掌果 = 沙漠，麦穗 = 草原），新增物品 " + (ItemCatalog.All.Count - itemBefore)
-            + " 种（岩石 = 沙漠 / 草原，草垛 = 草原，木料 = 森林，垃圾桶 = 城市，木桶 / 灯笼 = 农村 / 城市）。"
+            + " 种（石头四档 = 沙漠 / 草原 / 森林（越大的越少见），草垛 = 草原，木料 = 森林，垃圾桶 = 城市，"
+            + "木桶 / 灯笼 = 农村 / 城市）。"
             + "合计食物 " + FoodCatalog.All.Count + " 种、可交互物品 " + ItemCatalog.All.Count + " 种。");
     }
 
@@ -163,7 +164,10 @@ public static class ContentPack
 
     public static void RegisterItems()
     {
-        if (ItemCatalog.Find(BiomeItemIds.Rock) == null) ItemCatalog.Register(MakeRock());
+        if (ItemCatalog.Find(BiomeItemIds.RockSmall) == null) ItemCatalog.Register(MakeRock(RockTierSmall));
+        if (ItemCatalog.Find(BiomeItemIds.RockMedium) == null) ItemCatalog.Register(MakeRock(RockTierMedium));
+        if (ItemCatalog.Find(BiomeItemIds.RockLarge) == null) ItemCatalog.Register(MakeRock(RockTierLarge));
+        if (ItemCatalog.Find(BiomeItemIds.RockHuge) == null) ItemCatalog.Register(MakeRock(RockTierHuge));
         if (ItemCatalog.Find(BiomeItemIds.HayBale) == null) ItemCatalog.Register(MakeHayBale());
         if (ItemCatalog.Find(BiomeItemIds.Log) == null) ItemCatalog.Register(MakeLog());
         if (ItemCatalog.Find(BiomeItemIds.TrashCan) == null) ItemCatalog.Register(MakeTrashCan());
@@ -171,40 +175,177 @@ public static class ContentPack
         if (ItemCatalog.Find(BiomeItemIds.Lantern) == null) ItemCatalog.Register(MakeLantern());
     }
 
-    /// <summary>岩石：沙漠 / 草原。很沉（搬起来很慢），但砸得碎 —— 沙漠里唯一能推能砸的东西。</summary>
-    static ItemDefinition MakeRock()
+    // ---------------- 石头：按大小分四档（2026-09-25）----------------
+    //
+    // 美术交的石头是 7 张图（stone1~4 灰、stone5~7 土黄，从小到大），代码这边按**大小**归成四档。
+    // 四档的差别（就是「一块石头值不值得搬」的三个维度）：
+    //   · 占地大小 —— 小碎石 0.34，巨石 1.25；
+    //   · 搬运手感 —— carryWeight（拖动跟手程度）+ carrySpeedMultiplier（搬着它走路的速度倍率）；
+    //   · 能不能吃 —— requiredLevel（几级才啃得动）与营养 / 分量（越大的越顶饱）。
+    // 再往下还有「碎掉要撞几下」（hp）和「出现概率」。
+    //
+    // 出现概率按场景调：`SpawnRule.WeightOf` = 基础权重 × 地貌倍率 × 聚落倍率（见 SpawnKit），
+    // 所以小碎石在哪都多、巨石基本只在沙漠里偶尔见，城里石头最少。
+    // 用哪张配色（灰 / 土黄）由 variantWeights 按地貌决定（见 RockColorWeights）。
+
+    /// <summary>一档石头的全部数值（<see cref="MakeRock"/> 只负责把它变成一个物品定义）。</summary>
+    struct RockTier
+    {
+        public string id, key, title, description, hiddenNote;
+        /// <summary>占地大小范围（世界单位）。</summary>
+        public float sizeMin, sizeMax;
+        /// <summary>搬运迟滞：越大越不跟手。</summary>
+        public float carryWeight;
+        /// <summary>搬着它走路的速度倍率：越小越慢。</summary>
+        public float carrySpeed;
+        /// <summary>长到几级才啃得动（1 = 一开始就能吃）。</summary>
+        public int level;
+        public int nutrition;
+        public int satietyMin, satietyMax;
+        /// <summary>撞几下才碎。</summary>
+        public float hp;
+        /// <summary>碎掉掉几块渣。</summary>
+        public int debris;
+        /// <summary>「位」抽签的基础权重。</summary>
+        public float weight;
+        /// <summary>按地貌的权重倍率（下标 = <see cref="NatureKind"/> 的值：草原 0 / 森林 1 / 沙漠 2）。</summary>
+        public float[] natureScale;
+        /// <summary>按聚落的权重倍率（下标 = <see cref="SettlementKind"/> 的值：荒野 0 / 农村 1 / 城市 2）。</summary>
+        public float[] settlementScale;
+    }
+
+    static readonly RockTier RockTierSmall = new RockTier
+    {
+        id = BiomeItemIds.RockSmall,
+        key = ArtKeys.RockSmall,
+        title = "小石头",
+        description = "随手就能搬起来的小石子。一开始就啃得动 —— 没什么肉，胜在到处都是。",
+        hiddenNote = "小石头：分量很小",
+        sizeMin = 0.34f, sizeMax = 0.44f,
+        carryWeight = 1.1f, carrySpeed = 0.34f,
+        level = 1, nutrition = 1, satietyMin = 4, satietyMax = 8,
+        hp = 1f, debris = 5,
+        weight = 9f,
+        natureScale = new[] { 1.0f, 0.6f, 1.3f },
+        settlementScale = new[] { 1.2f, 0.9f, 0.5f }
+    };
+
+    static readonly RockTier RockTierMedium = new RockTier
+    {
+        id = BiomeItemIds.RockMedium,
+        key = ArtKeys.RockMedium,
+        title = "石头",
+        description = "一块压手的石头。搬起来明显慢了，长到 " + BugGrowth.CrateLevel + " 级才啃得动，撞两下能碎。",
+        hiddenNote = "石头：分量还行",
+        sizeMin = 0.55f, sizeMax = 0.68f,
+        carryWeight = 1.9f, carrySpeed = 0.26f,
+        level = BugGrowth.CrateLevel, nutrition = 2, satietyMin = 8, satietyMax = 14,
+        hp = 2f, debris = 6,
+        weight = 6f,
+        natureScale = new[] { 1.0f, 0.6f, 1.3f },
+        settlementScale = new[] { 1.2f, 0.9f, 0.4f }
+    };
+
+    static readonly RockTier RockTierLarge = new RockTier
+    {
+        id = BiomeItemIds.RockLarge,
+        key = ArtKeys.RockLarge,
+        title = "大石头",
+        description = "要两只手才推得动的大石头。搬着它走路慢得让人着急，"
+            + BugGrowth.TreeLevel + " 级以后才啃得动，得撞上好几下才碎。",
+        hiddenNote = "大石头：很顶饱",
+        sizeMin = 0.78f, sizeMax = 0.94f,
+        carryWeight = 2.7f, carrySpeed = 0.18f,
+        level = BugGrowth.TreeLevel, nutrition = 3, satietyMin = 12, satietyMax = 18,
+        hp = 3f, debris = 7,
+        weight = 3.5f,
+        natureScale = new[] { 0.8f, 0.3f, 1.5f },
+        settlementScale = new[] { 1.3f, 0.8f, 0.3f }
+    };
+
+    static readonly RockTier RockTierHuge = new RockTier
+    {
+        id = BiomeItemIds.RockHuge,
+        key = ArtKeys.RockHuge,
+        title = "巨石",
+        description = "沙漠里那种半人高的巨石。满级（" + BugGrowth.VillagerLevel
+            + " 级）才啃得动，搬起来几乎是一步一挪 —— 但它撞碎时的动静，够全村人听见。",
+        hiddenNote = "巨石：最大的分量",
+        sizeMin = 1.05f, sizeMax = 1.25f,
+        carryWeight = 3.6f, carrySpeed = 0.12f,
+        level = BugGrowth.VillagerLevel, nutrition = 4, satietyMin = 16, satietyMax = 24,
+        hp = 4f, debris = 9,
+        weight = 1.6f,
+        natureScale = new[] { 0.5f, 0.1f, 1.6f },
+        settlementScale = new[] { 1.3f, 0.7f, 0.2f }
+    };
+
+    /// <summary>把一档石头变成物品定义（四档共用这一套：能搬、能啃、能撞碎）。</summary>
+    static ItemDefinition MakeRock(RockTier tier)
     {
         return new ItemDefinition
         {
-            id = BiomeItemIds.Rock,
-            artKey = ArtKeys.Rock,
-            shape = ArtShape.Round,
+            id = tier.id,
+            artKey = tier.key,
+            shape = ArtShape.Round,        // 没交图时的程序化外观
             sliced = false,
-            sizeMin = 0.55f,
-            sizeMax = 0.85f,
-            color = new Color(0.52f, 0.50f, 0.47f),
+            wholeArt = true,               // 石头是整图素材：有图就按内容比例装进占地、底边贴地
+            variantWeights = RockColorWeights,
+            sizeMin = tier.sizeMin,
+            sizeMax = tier.sizeMax,
+            color = new Color(0.54f, 0.53f, 0.50f),
             draggable = true,
-            carryWeight = 2.2f,          // 沉：搬运时小虫明显更慢
-            edible = false,
-            title = "岩石",
+            carryWeight = tier.carryWeight,
+            carrySpeedMultiplier = tier.carrySpeed,
+            edible = true,
+            nutrition = tier.nutrition,
+            requiredLevel = tier.level,
+            satietyMin = tier.satietyMin,
+            satietyMax = tier.satietyMax,
+            hiddenNote = tier.hiddenNote,
+            title = tier.title,
             kind = "景物",
-            description = "一块压手的石头。搬起来很费劲，但撞碎了也能当碎片玩。",
+            description = tier.description,
             rectHighlight = true,
             spawn = new SpawnRule
             {
-                weight = 8f,
+                weight = tier.weight,
                 clearance = 0.45f,
                 padding = 0.3f,
-                footprint = 0.55f
-            }.InNatures(NatureKind.Desert, NatureKind.Grassland),
+                footprint = 0.55f,
+                weightInNature = nature => ScaleAt(tier.natureScale, (int)nature),
+                weightInSettlement = settlement => ScaleAt(tier.settlementScale, (int)settlement)
+            }.InNatures(NatureKind.Desert, NatureKind.Grassland, NatureKind.Forest),
             decorate = go =>
             {
                 Breakable breakable = go.AddComponent<Breakable>();
-                breakable.hp = 2f;
-                breakable.debrisCount = 7;
+                breakable.hp = tier.hp;
+                breakable.debrisCount = tier.debris;
                 breakable.debrisColor = new Color(0.52f, 0.50f, 0.47f);
             }
         };
+    }
+
+    /// <summary>取倍率表里的第 <paramref name="index"/> 项；越界（新加了地貌 / 聚落没补表）时按 1 倍算。</summary>
+    static float ScaleAt(float[] table, int index)
+    {
+        if (table == null || index < 0 || index >= table.Length) return 1f;
+        return table[index];
+    }
+
+    /// <summary>
+    /// 石头用哪张配色（下标 = 变体顺序 = 文件名结尾数字的顺序，也就是 [0] = 灰那张、[1] = 土黄那张）：
+    /// 沙漠里多是土黄的、森林里几乎都是灰的、草原两种都有。
+    /// **只有一张图时这套权重不起作用**（没得挑，直接用那唯一一张）。
+    /// </summary>
+    static float[] RockColorWeights(NatureKind nature)
+    {
+        switch (nature)
+        {
+            case NatureKind.Desert: return new[] { 0.25f, 0.75f };
+            case NatureKind.Forest: return new[] { 0.90f, 0.10f };
+            default: return new[] { 0.60f, 0.40f };
+        }
     }
 
     /// <summary>草垛：草原。能搬也能啃（2 级）。</summary>
@@ -382,8 +523,14 @@ public static class BiomeFoodIds
 /// <summary>按聚落 / 自然体系分家的可交互物品 id。</summary>
 public static class BiomeItemIds
 {
-    /// <summary>岩石（沙漠 / 草原）。</summary>
-    public const string Rock = "rock";
+    /// <summary>石头·小：到处都有（森林里少一点），一开始就搬得动、啃得动。</summary>
+    public const string RockSmall = "rock_small";
+    /// <summary>石头·中：要 <see cref="BugGrowth.CrateLevel"/> 级。</summary>
+    public const string RockMedium = "rock_medium";
+    /// <summary>石头·大：很沉，要 <see cref="BugGrowth.TreeLevel"/> 级。</summary>
+    public const string RockLarge = "rock_large";
+    /// <summary>石头·巨石：基本只在沙漠，最沉，要满级。</summary>
+    public const string RockHuge = "rock_huge";
     /// <summary>草垛（草原）。</summary>
     public const string HayBale = "hay_bale";
     /// <summary>木料堆（森林）。</summary>

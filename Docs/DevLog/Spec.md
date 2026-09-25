@@ -90,7 +90,7 @@
 | 玩法 | `Burrow` / `EncounterWindow` / `EntityInfo` / `Highlighter` / `ProximityHighlight` | 地洞地道 / 右下悬浮窗 / 介绍文本 / 高亮 |
 | 存档 | `SaveSystem` / `AutoSave` | JSON（**当前 v5**，先 `.tmp` 再替换）/ 每 5 秒自动存 + 失焦退出补存 + 读档 |
 | 界面 | `SimpleHUD` / `MainMenu` / `ReturnToMenu` / `GameInput` / `GameSettings` | HUD（uGUI+TMP）：左上角「操作说明 + 状态行」、**屏幕正下方三条条（体力 / 混乱 / 警觉）**、右下角悬浮窗；面板高度 = 文字高度 + 边距、位置在运行时算（`SimpleHUD.LayoutPanels`），所以改文案不会顶出面板也不会互相压住 / 开始界面 / Esc / 按键统一表 / 全局音量 |
-| 素材 | `ArtOverride` + `ArtSlot` + `MenuArt` + `Applier` + `Editor/ArtOverridePostprocessor` | 图片按 key「一物一图」替换（key 表见 `ArtKeys` / `Slots`） |
+| 素材 | `ArtOverride` + `ArtSlot` + `MenuArt` + `Applier` + `Editor/ArtOverridePostprocessor` | 图片按 key「一物一图」替换（key 表见 `ArtKeys` / `Slots`）；整栋建筑一图替换与文件名别名见 §4.11；整图素材与变体见 §4.11 末；瓦片路网见 §4.13；整身村民与头顶表情见 §4.14 |
 | | `AudioOverride` + `AudioOverridePlayer` + `BugFootsteps` + `Editor/AudioOverridePostprocessor` | 音频按 key 播放 |
 
 ### 4.2 世界生成模型
@@ -347,6 +347,62 @@
 - `BuildChunk` 里的顺序是 **先 `BuildTrees()` 再 `BuildFoods()`**（2026-09-25 调过）：
   这样「果子长在树旁」在同一个区块里就能成立（原来是反过来的，第一个区块常常没树可依附）。
 
+### 整栋建筑一图替换（2026-09-25 加）
+
+美术有时交的是**整栋画好的建筑**（一张 3/4 视角的图，拆不成墙 / 门 / 窗）。为此加了一类**整栋 key**
+（`ArtKeys` 里「整栋建筑」那一段）：`house_cottage` / `house_two_story` / `house_rowhouse` / `house_barn` /
+`house_cabin` / `house_apartment`（六种房型各一个）、`stall`（集市摊位）、`windmill`（风车，**叶片画在图里**）。
+
+- **落地方式**：`VillageGenerator.AddWholeBuilding(parent, key, area, order)` —— 有图就在占地上画一整栋并返回 true；
+  `CreateHouse` / `BuildStall` / `BuildWindmill` 据此**整栋跳过全部分件**（墙 / 门 / 窗 / 屋顶 / 烟囱 / 会转的叶片都不再生成）；
+- **摆放规则**：按**原图长宽比**缩放进占地矩形（contain：水平居中、底边压在占地南边）→ 不拉伸、不越界；
+  图与占地比例差太多时**留白**，不裁切、不盖到邻居。
+  实测（种子 2122465504，开局农村 + 一个城市区块）：**174 栋房子全部「在占地内 + 底边对齐 + 比例保持」，0 个几何异常**；
+- **尺寸与 PPU 无关**：用 `SpriteRenderer.size`（Sliced + 无边框 = 世界单位尺寸）给定，
+  所以这些 key **不做九宫格**、也不看导入的 Pixels Per Unit（美术交 64px 还是 256px 都不变形）；
+- **代价（已写进 README 让美术知道）**：① 窗户不会在夜里发亮（静态图点不亮）；② 风车不再有会转的叶片；
+- **两种贴法可混用**：交了整栋图的房型走整栋，没交的继续走分件。
+
+### 文件名别名（`ArtOverride.Aliases`，2026-09-25 加）
+
+美术给的图常常不叫正式 key（`structure1.png`、`windmill1.png`、拼错的 `sturcture2.png`…）。
+`ArtOverride` 里有一张**别名表**（写法同音频的 `AudioOverride.AliasSource`），把这类名字映射到 key；
+匹配顺序是 **正式 key → 别名表 → 去掉结尾数字再试一次**，都没命中才进 `UnmatchedFiles` 被点名。
+走别名认出来的图会在 Console 打一行日志（说明它被当成了哪个 key）。
+**图片表 `table` 必须按「正式 key」索引**（不是按文件名）—— 否则 `Get(key)` 取不到别名认出来的图，
+表现为「文件明明放对了、图就是不生效」（2026-09-25 差点踩到）。
+
+### 变体与整图素材（2026-09-25 加，见红线 34 / 35）
+
+美术交图常常是「一个物件好几张」（`tree1~4`、`stone1~7`、`bush1/2`），所以加了两件事：
+
+**① 变体**：同一个 key 的多张图 = 这个物件的变体，文件名结尾的数字就是变体号。
+`ArtOverride` 内部是 `Dictionary<key, List<Variant>>`（`Variant{ sprite, file, number }`），
+**按 `number` 显式排序**（`Resources.LoadAll` 的返回顺序不保证，而「第几张」是美术看得见的约定）；
+公共 API：`Get(key)` = 第一张、`Get(key, 编号)` = 指定编号（编号不存在时退回第一张）、
+`PickVariant(key, 权重数组, roll)` = 按权重抽（权重下标 = 变体顺序；写少了的部分按 1 算；全 0 → 均匀抽）。
+谁的权重写在哪：树 `VillageGenerator.TreeVariantWeights(nature)`、
+灌木 `VillageGenerator.BushVariantNumber(nature)`、石头配色 `ContentPack.RockColorWeights(nature)`。
+随机源必须是**确定性的**：树 / 灌木用生成器的 `rng`，物品用位置哈希 `SpawnContext.Roll01`。
+
+**② 整图素材**（`Slot.whole = true`：`tree` / `bush` / `rock_small` / `rock_medium` / `rock_large` / `rock_huge`）：
+美术习惯把物体画在 128×128 画布的中间（内容只占 30%~60%），按老的「与原素材等宽」规则套上去
+物体会小掉一半、脚下的影子还比物体大一圈。所以：
+
+- **导入时**（`ArtOverridePostprocessor`）：读源图的 alpha 包围盒，按内容裁掉透明边
+  （`SpriteImportMode.Multiple` + 一条 `SpriteMetaData`，**sprite 名字必须保持文件名**，
+  否则 `ArtOverride` 靠 `sprite.name` 认 key 的那条链会断）；
+- **运行时**（`ArtShapes.AddWholeImage`）：按这张图的**内容宽高比** contain 进占地正方形
+  （长的方向填满、另一方向留白、**绝不拉伸**），**底边贴地**、水平居中，尺寸走 `SpriteRenderer.size`
+  → 与 `Pixels Per Unit` 无关，交 64px 还是 256px 都不变形；
+- **有图就让位**：整图不叠影子 / 内部高光（它们是按圆形图元算的，位置和大小都对不上）；
+- 树的碰撞体跟着挪到**树干那一带**（整图底边贴地，树干在下半截），见 `CreateTree`。
+
+**石头四档**（`ContentPack` 的 `RockTier*` 表）：小 / 中 / 大 / 巨四档，
+逐档写「占地、搬运迟滞 `carryWeight`、搬运移速 `carrySpeedMultiplier`、可吃等级 `requiredLevel`、
+营养 / 分量、可破坏 hp、碎片数」以及**按地貌 / 聚落缩放的出现概率**
+（`SpawnRule.weightInNature` / `weightInSettlement`，见 `<see cref="SpawnRule.WeightOf"/>`）。
+
 ---
 
 ## 4.12 世界地貌与聚落体系（`WorldBiome` / `ContentPack`）
@@ -392,19 +448,24 @@ ApplyDensity(...)      // 最后统一乘 Density(1.8)；村民数量不乘
 
 | 聚落 × 自然 | 树 | 灌木 | 仙人掌 | 枯树 | 房子 | 村民 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 草原·农村 | 18~29（每区块） | 6 | 0 | 1 | 5~9 | 2~4 |
+| 草原·农村 | 18~29（每区块） | 6 | 0 | 1 | 9~14 | 2~4 |
 | 草原·荒野 | 18~29 | 7 | 0 | 1 | 0~2 | 0~1 |
-| 森林·农村 | 31~49 | 9 | 0 | 3 | 5~9 | 2~4 |
+| 森林·农村 | 31~49 | 9 | 0 | 3 | 9~14 | 2~4 |
 | 森林·荒野 | 31~49 | 9 | 0 | 3 | 0~2 | 0~1 |
-| 沙漠·农村 | 2~4 | 0 | 8 | 6 | 5~9 | 2~4 |
+| 沙漠·农村 | 2~4 | 0 | 8 | 6 | 9~14 | 2~4 |
 | 沙漠·荒野 | 2~4 | 0 | 12 | 6 | 0~2 | 0~1 |
-| 草原·城市 | 5~13 | 1 | 0 | 1 | 11~16（实际约 8） | 6~9 |
-| 森林·城市 | 9~22 | 5 | 0 | 3 | 11~16（实际约 8） | 6~9 |
-| 沙漠·城市 | 0~2 | 0 | 8 | 6 | 11~16（实际约 8） | 6~9 |
+| 草原·城市 | 5~13 | 1 | 0 | 1 | 14~22（实测约 10） | 6~9 |
+| 森林·城市 | 9~22 | 5 | 0 | 3 | 14~22（实测约 10） | 6~9 |
+| 沙漠·城市 | 0~2 | 0 | 8 | 6 | 14~22（实测约 10） | 6~9 |
 
-> **城市的房子数为什么达不到 11~16**：宽路面 + 广场 + 设施把 32×32 的区块切碎了，
+> **房子的基数在 2026-09-25 上调过**（用户「房屋密度不够」）：农村 3~5 → **5~8**、城市 6~9 → **8~12**
+> （都再乘 `Density` 1.8）。实测平均：**农村 10.6 栋/块、城市 10.1 栋/块**
+> （12 个区块采样；改之前大约是 7 与 8）。
+> **城市的房子数为什么达不到名义值**：路面 + 设施把 32×32 的区块切碎，
 > 大公寓（需要约 5.8×6.8 的空地）塞不进碎地块。`VillageGenerator.BuildHouses` 的对策是
-> **「连着失败 60 次就把房型降小一号」**（公寓 → 排屋 → 两层小楼 → 农舍），实测每区块约 8 栋。
+> **「连着失败 60 次就把房型降小一号」**（公寓 → 排屋 → 两层小楼 → 农舍），所以最后落在 10 栋左右。
+> 还嫌少就把 `WorldBiome.ApplySettlement` 里的 `houseMin/houseMax` 再抬高，或者把 `BuildHouses`
+> 里 `IsFree(area, 1.0f)` 的余量调小（房与房会贴得更近）。
 > 想更密就调小 `BuildHouses` 里 `IsFree(area, 1.0f)` 的余量。
 
 ### 路型与广场不再是必然
@@ -447,7 +508,7 @@ ApplyDensity(...)      // 最后统一乘 Density(1.8)；村民数量不乘
 | `mushroom` / `pinecone` | 森林 + `nearTrees` | 只长在树底下 |
 | `cactus_fruit` | 沙漠 + `nearAnchor "cactus"` | 只长在仙人掌旁边 |
 | `wheat` | 草原 | 草原的口粮 |
-| `rock` | 沙漠 + 草原 | 能搬（`carryWeight 2.2`，很沉）能砸 |
+| `rock_small` / `rock_medium` / `rock_large` / `rock_huge` | 沙漠 / 草原 / 森林（概率按地貌与聚落缩放，见 §4.11） | 四档石头：越大的越沉（`carryWeight` 1.1→3.6）、搬着走越慢（`carrySpeedMultiplier` 0.34→0.12）、要越高等级才啃得动（1/2/3/4 级）；都能撞碎 |
 | `hay_bale` | 草原 | 能搬能吃 |
 | `log` | 森林 | 能搬能吃 |
 | `trash_can` | 城市 | 能搬能吃 |
@@ -460,6 +521,141 @@ ApplyDensity(...)      // 最后统一乘 Density(1.8)；村民数量不乘
 
 ---
 
+## 4.13 瓦片路网（`road_*`，2026-09-25 加）
+
+用户交了一整套**带草地底色的路口瓦片**（`cross` / `corner-*` / `t-intersection-*` / `roadhead-*` /
+`path1·2`），所以路从「一张贴图铺满整条路」升级成**按路口形状铺瓦片**。改动全在
+`VillageGenerator.BuildRoads` / `BuildTiledRoad` / `BuildRoadArm` / `RoadTileKey` / `ArmMask` / `ArmsAt`。
+
+**瓦片的语义**（**按像素实测确认过**，不是猜的 —— 以后换了包也要重新量一遍）：
+
+| 文件 | 路在哪几边 |
+| --- | --- |
+| `cross` | 上 + 下 + 左 + 右 |
+| `t-intersection-up` | 上 + 左 + 右（**缺下边**，名字 = 指向哪边） |
+| `t-intersection-down` / `-left` / `-right` | 缺上边 / 缺右边 / 缺左边 |
+| `corner-{up\|down}-{left\|right}` | 名字里的那两边 |
+| `roadhead-{up\|down\|left\|right}` | 只有**反方向**那一边有路（`roadhead-up` = 路从下往上、在顶端收口） |
+| `path1` / `path2` | 竖直 / 水平的直路瓦片 |
+
+**几何**：路口瓦片的世界尺寸 = `roadWidth ÷ roadTileRoadRatio`（交付的这套路面占画布 36/128 = 0.28125），
+于是瓦片里的路正好和直路段一样宽；瓦片**自带草地边**，所以它比路面大一圈，多出来的部分是「地面」
+（绘制在 `Ground` 层，永远在角色与物件下面）。直路段从瓦片边缘（`tile/2`）铺到区块边界，
+沿路**分几张相邻的瓦片**铺（张数 = 长度 ÷ 瓦片尺寸 四舍五入，长度均分给每张；一张拉到底会把图的
+横向细节拉成 2 倍长），每张都用 **`Sliced`（拉伸）**，**不要用 `Tiled`**（见红线 43）；
+没有直路瓦片就退回路面贴图（宽度相同、中心线相同，接得上）。
+横向的臂用 `road_straight_h`、纵向的臂用 `road_straight_v`（见红线 44）。
+路走到区块边界而**对面那块地没有能对接的路**时，在边界上盖一张「尽头瓦片」收口；
+尽头瓦片里「路尖」不在瓦片正中，靠 `roadHeadTipRatio`（这套 0.70）对齐，**让路尖正好落在边界上**。
+**路面宽度**由 `WorldBiome.RoadWidthOf` 给：**荒野 1.5 / 农村 2.0 / 城市 2.6** 世界单位
+（2026-09-25 用户嫌 3.4 太粗，整体收窄约 40%；小虫只有 0.4×、相机视野 16.8×29.9，路太宽会抢眼）。
+
+**怎么验证「路是一条、接得上」**（不靠眼睛，2026-09-25 用的办法，实测有效）：
+Play 里把非 `Ground` 排序层的渲染器全关掉 → 建一台正交相机（`orthographicSize = 16` = 正好一块区块、
+256×256 的 `RenderTexture` → 8 px = 1 世界单位）对准区块中心 → `cam.Render()` + `ReadPixels` →
+沿一条线数「路面颜色」的**连续段数**（这套路面 ≈ RGB 217,162,77、草地 ≈ 39,174,96，
+`r>0.55 && r-g>0.08 && r-b>0.24` 就能分开）。判据：
+- **横跨路量几次**（在直路段上竖着扫）：每处都应当是 **1 段**、宽度 ≈ `roadWidth`
+  （2026-09-25 实测：2.0 宽的路量到 1.88~2.00）；段数变成 5、6 且每段只有 0.5 出头就是瓦片被重复了（红线 43）；
+- **顺着路量**（沿中线扫）：应当**只断很少几次**——实测十字路口区块的中线是 **1 段 32.00 世界单位**
+  （整块区块一条到底，含路口与两段直路）；
+- 再用对象的 `bounds` 核对「路口瓦片的边 = 直路段的起点」（实测两边都是 `tile/2` ✓）。
+
+**路口朝向是抽出来的**：`TurnIndex(coord, seed)` 决定丁字缺哪边、L 型连哪两边，
+所以 8 张转角 / 丁字瓦片都会用到（原来 T 固定「缺下边」、L 固定「右上」，另有 6 张永远用不上）。
+
+**两条硬限制（不是 bug）**：
+① 这套瓦片的底色是**草地**，所以 `UseRoadTilesFor` 默认**只在草原、且不是城市**的地方铺瓦片路网；
+森林 / 沙漠 / 城市继续用 `ground_*` / `road_*` 贴图直铺。想让沙漠城市也铺，打开 `roadTilesEverywhere`
+（会露出一块块绿）；
+② 一张瓦片都没有时 `BuildTiledRoad` 返回 false，**完全退回**原来的「长方形互相重叠」那条老路 ——
+所以**没有素材的工程行为一个字都没变**（下面的「纯函数 + 照样消耗一次 rng」就是为了这个）。
+
+### 邻居区块怎么算（纯函数，见红线 38/39）
+
+「路到这儿该不该收口」要知道**隔壁区块**的路型，而隔壁可能还没生成，所以抽签必须是纯函数：
+
+```
+RoadPresent(coord, worldSeed, roadChance)   // 「有没有路」= 区块种子的第一次抽签
+PickRoadShape(coord, worldSeed, settlement, roadChance, runLength)   // 路型
+TurnIndex(coord, worldSeed)                 // 路口朝向
+ArmsAt(coord) → ArmMask(shape, turn)        // 这个区块路在哪几边（含「用不用瓦片」）
+```
+
+`WorldBiome.RoadWidthOf` / `RoadChanceOf` 是这两个数字的**唯一来源**（`ApplySettlement` 也调它们，
+不许再写一份字面量）。判断收口就一句：`(ArmsAt(邻居坐标) & OppositeArm(方向)) == 0` → 对面接不上 → 盖尽头瓦片。
+
+---
+
+## 4.14 整身村民与头顶表情（2026-09-25 加）
+
+**整身村民**（用户交的 `man1~7` / `woman1~4` = 11 个变体）：`VillageGenerator.CreateVillager` 里
+`ArtOverride.PickVariant(ArtKeys.Villager, null, rng)` 拿到图就直接用 `ArtShapes.AddWholeImage` 画一整张，
+**跳过「方块身子 + 圆头」**；图**不染职业色**（颜色是画好的），脚底按 `villagerFootY` 对齐
+（默认 −0.38，和原来那套的身子脚底一致）。没有图 = 完全照旧。
+
+**头顶表情**：`Villager` 里头顶只有**一个槽位**（`Emoji` 物体 + 一个 `SpriteRenderer`），
+优先级写死在 `UpdateAlertMark()`：**听到动静的感叹号 > 刚进入状态时冒的表情（有寿命）> 不显示**。
+每帧刷（表情会过期），但只有「该显示哪张」变了才动渲染器（不每帧切贴图）。
+
+| 状态 | 表情 |
+| --- | --- |
+| `Alert` / 正走向动静（`IsReactingToNoise` / `IsHeadingToNoise`） | `emoji_exclamation` |
+| `Chase` | `emoji_angry` |
+| `Flee` | `emoji_no` / `emoji_sad` / `emoji_heart_broken`（随机挑一张） |
+| `Stunned` / `Slip` | `emoji_dizzy` |
+| `Investigate` | `emoji_bulb` |
+| `Search` | `emoji_confused` |
+| `Socialize` | `emoji_haha` / `emoji_love` / `emoji_happy` |
+| `Play` | `emoji_happy` / `emoji_haha` |
+| `Recover` | `emoji_speechless` / `emoji_ashamed` |
+| `Work` | `emoji_sleepy` |
+| 目睹同伴被吃（`WitnessBugEating` → `Grieve()`） | `emoji_heart_broken`（持续 1.6×） |
+
+- 表在 `Villager.EmojiFor`（静态数组，状态切换时才查，**不在 Update 里分配**）；
+- **没交这张图时**：感叹号退回原来那套程序化画的黄「!」（`BuildAlertMark`），其它状态直接不显示 ——
+  所以没素材的工程还是「有 `!`、没表情」的老样子；
+- 大小由代码给（`emojiSize` 0.46 世界单位，按图宽高比缩放 → 与 PPU 无关）、挂在 `emojiHeight` 0.9；
+- 表情与「!」都在 `Villager.Awake` 里建、在缓存 `visualRenderers` **之前** —— 这样
+  `freezeVisuals`（远距离冻结关渲染）会一起把它们关掉（同红线 24 的思路）。
+
+---
+
+## 4.15 地面 / 铺装的柔边（`AddFeatherRing`，2026-09-25 加）
+
+**问题**：地貌地面是**按区块**铺的（森林 / 沙漠每块 32×32，`BuildGround`），广场（水井 / 喷泉周围
+那块 10×10 铺装）是**一个方形**。它们边界都是「一刀切的直角」，于是背景看起来是**一块一块的方块**、
+水井周围也有一圈硬边（用户 2026-09-25 的原话：「缩小背景砖块，平滑处理水井周围的砖块」）。
+
+**做法**：`VillageGenerator.AddFeatherRing(parent, name, area, sprite, color, width, steps, order)` ——
+往这块矩形外面再铺 `steps` 圈**同样的贴图**，一层比一层淡（α = 0.55 / 0.41 / 0.28 / 0.14…；圈是叠加的，
+所以从边缘往外是一条 5 级左右的透明渐变）。**好处是不需要任何软边素材**：贴图和颜色和本体完全一致，
+只是透明度递减，所以叠在同色地面上完全看不出痕迹（两块同地貌的区块之间就是这种情况）。
+
+| 用在哪 | 参数 | 结果 |
+| --- | --- | --- |
+| 地貌地面（森林 / 沙漠） | `groundFeatherWidth 3` × `groundFeatherSteps 4`，order −894 | 32×32 的地面外圈多出 33/34/35/36 四圈 → 和邻块（尤其草原的无限草地）之间是 3 米宽的渐变 |
+| 广场铺装（水井 / 喷泉那块方砖） | **默认不铺了**：`drawPlazaPaving = false`（2026-09-25 用户「取消水井周围的方形地块」）。要铺回来就打开它，那时才用 `plazaFeatherWidth 1.6` × `plazaFeatherSteps 4`、order −888 | 打开后：10×10 的方砖外圈 10.8 / 11.6 / 12.4 / 13.2 → 方砖形状不变、边缘化开 |
+
+> **村中心现在是什么样**（`drawPlazaPaving = false`）：就是**路口 + 水井**，脚下是草地 ——
+> 没有那块 10×10 的方砖。`occupied` / `roadRects` **照旧登记**那块 10×10（村子中心的留白、
+> 房子排布、守卫巡逻取样点都不变），只是不画东西。**别顺手删掉那次 `Chance(plazaChance)` 抽签** ——
+> 少一次随机数会让整条序列错位，所有区块的布局都会变（§4.2 的确定性）。
+> 这同时**解决了 §4.13 里「广场盖住路口瓦片、四角露出一圈草地」那个遗留**：没有方砖了，
+> 路口瓦片自然就露出来（实测：带水井的区块里只剩 2×2 的路口方块与道路瓦片，10×10 的方砖与柔边都不见了）。
+
+**两条约束**：
+① **order 要压在道路之下**（道路贴图 −885、瓦片 −884~−882）：柔边圈是半透明的，盖在路面上会给路蒙一层脏色；
+地貌柔边 −894、铺装柔边 −888 都满足（而且都在地貌地面 −895 之上）；
+② **不要为了「看起来更小」去缩小不透明的那一块**：地貌地面必须仍然铺满整块区块（32×32），
+否则两块同地貌的区块之间会露出一条草线（更难看）。「变小」靠的是外圈渐变，不是留缝。
+
+**实测**（编辑器里搭一个沙漠区块、渲染一条横线，x = 0 是区块边界）：
+区块内是沙（RGB ≈ 155,128,91），出界后 0.5 / 1.0 / 1.5 米分别是 **0.93 / 0.77 / 0.48 倍**的沙色，再往外淡出 ——
+**是一条渐变，不是硬边**。
+
+---
+
 ## 5. 资源规范（图片 / 音频）
 
 **完整规范在根 [`README.md`](../../README.md)**（对外交接文档，含每个 key 的像素/时长/响度要求）。
@@ -468,8 +664,20 @@ ApplyDensity(...)      // 最后统一乘 Density(1.8)；村民数量不乘
 - 图片是**一物一图**：**一个 key 只管一个物件**，key 表（key → 原素材 / 是否保留代码染色 / 是否九宫格 / 是否平铺）
   在 `Assets/Scripts/ArtOverride.cs` 的 `Slots`，常量在 `ArtKeys`。
   已废弃的旧写法：按原素材名匹配（`rect` / `disc` / `roundrect` / `marker` / `grass`）——一张图换遍全场景，已删除。
-- 图片 key（**100 个**）：其中 2026-09-25 新增 36 个（地貌地面 3 + 路面 2 + 自然景物 7 + 房型 7 +
-  聚落地标 8 + 按地貌分家的食物 4 + 按聚落分家的物品 6；地面/路面共 6 个 key 标了 `tiling`）。
+- 图片 key（**145 个**）：2026-09-25 新增 36 个（地貌地面 3 + 路面 2 + 自然景物 7 + 房型 7 +
+  聚落地标 8 + 按地貌分家的食物 4 + 按聚落分家的物品 6；地面/路面共 6 个 key 标了 `tiling`），
+  同一天再新增 **8 个「整栋建筑」key**（六种房型 + `stall` + `windmill`，见 §4.11 —— 它们不做九宫格、
+  也不看 Pixels Per Unit），同一天又**删掉旧的单张 `rock`、换成四档 `rock_small/medium/large/huge`
+  并新增整棵树 `tree`**（净 +4，见 §4.11 的「变体与整图素材」；这 6 个 key 标了 `whole`）。
+  **同一天又接入用户交的一整批新素材（+33，见 §4.13 / §4.14）**：整身村民 1 + 表情 14 +
+  路口/直路/尽头瓦片 15 + 城堡 1 + 杂项建筑 1 + 备用 1（`status_icon`）；
+  另外 8 个「整栋建筑」key 补上了 `whole`（整图裁边，见红线 35 —— 房子也是「画在画布中间」的那类素材）。
+  自检：`ArtKeys` 里的 key 常量数量应当 = `ArtOverride.Slots` 的行数（**145 = 145**，用
+  `typeof(ArtKeys)` 反射数一遍最快），别名表里每个值都必须是一个真实存在的 key（89 条）。
+  大量文件名走了别名（`house1` / `stone3` / `path2` / `medievalStructure_*`…）——
+  别名会**逐个文件**在 Console 打一行日志，那一屏刷屏是正常的。
+- **文件名别名表**：`ArtOverride.Aliases`（非正式文件名 → key），匹配顺序见 §4.11；别名只是兜底，
+  正式 key 仍然优先，认不出来的仍会在 Console 被点名。
 - **平铺 key 必须在 `Slots` 里标 `tiling: true`**：`ArtOverridePostprocessor` 会据此把导入的
   Wrap Mode 设成 `Repeat`（否则平铺时接缝处会被拉伸出一道糊边）。运行时的地块还会再兜一次
   （`VillageGenerator.ForceTiling`）。
@@ -603,6 +811,110 @@ ApplyDensity(...)      // 最后统一乘 Density(1.8)；村民数量不乘
 32. **按聚落 / 自然门控内容时，`hamletOnly` 与 `InSettlements` 的语义要和 README 一致**
     （2026-09-25 定）：`hamletOnly = true` 意思是「农村 + 城市」（不是「农村」）；只写一处门控不够 ——
     `pump` / `alarm` 就是因为只写了 `Fixed(...)` 而漏了门控，结果野外也会刷（README 却承诺「只在村庄」）。
+33. **整栋建筑 key 必须「整栋一起换」，而且图片表要按 key 索引**（2026-09-25 定，见 §4.11）：
+    ① `house_cottage` 这类整栋 key 有图时，`CreateHouse` 要在**开头**就画一整栋并 `return`，
+    **跳过墙 / 门 / 窗 / 屋顶 / 烟囱**；`BuildWindmill` 有整栋图时**不能再生成会转的叶片**（否则两套叶片叠在一起）；
+    `BuildStall` 同理。② 整栋图按**原图比例**缩放进占地（`AddWholeBuilding`：contain + 底边对齐），
+    **不要**为了铺满而按占地拉伸（会变形）。③ `ArtOverride` 的图片表**必须按正式 key 索引**，
+    不能按文件名 —— 按文件名索引时，靠别名 / 去数字认出来的图 `Get(key)` 取不到，表现为「文件放对了、图不生效」。
+34. **变体的顺序只能按文件名结尾的数字排，而且随机源必须是确定性的**（2026-09-25 定，见 §4.11）：
+    ① `ArtOverride` 的表是 `key → List<Variant>`，**必须显式 `Sort`**（`Resources.LoadAll` 的顺序不保证，
+    而「第几张」是美术看得见的约定 —— 权重数组的下标就是这个顺序）；
+    ② 抽变体不许用 `UnityEngine.Random`：树 / 灌木用生成器的 `rng`、物品用位置哈希
+    `SpawnContext.Roll01(位置, 盐)`，否则走远再回头同一块石头会换颜色；
+    ③ `Get(key, 编号)` 找不到该编号时要**退回第一张**（交了一张总比退回程序化美术强）。
+35. **整图素材（`Slot.whole`）导入时必须按内容裁边，运行时按内容比例装进占地**（2026-09-25 定，见 §4.11）：
+    ① 美术把物体画在 128 画布正中（内容只占 30%~60%）时，老规则「与原素材等宽」会让物体小掉一半、
+    影子比物体还大 —— 所以 `whole` 的 key 先在导入时裁掉透明边，再由 `ArtShapes.AddWholeImage`
+    按**内容宽高比** contain 进占地（底边贴地、绝不拉伸）；
+    ② 裁边用 `SpriteMetaData` + `SpriteImportMode.Multiple`，**sprite 的 `name` 必须 = 文件名**，
+    否则 `ArtOverride` 认 key 那条链（`sprite.name` → 别名 / 去数字）会断成「没对上 key」；
+    ③ `importer.spritesheet` 虽然被 Unity 标成过时（CS0618），但**仍然有效**
+    （真移除的 API 会变成 CS0619 编译错误，工程里 `AudioImporter.preloadAudioData` 就是）；
+    ④ **改 `whole` 标记后，已经导入过的图要清掉 `.meta` 里的 `userData`（`artoverride`）再重导**，
+    否则 `ArtOverridePostprocessor` 会以「已配置过」为由跳过（脚本里 `SaveAndReimport` 一次即可）。
+36. **`SpawnContext` 只在生成期间有意义**（2026-09-25 定，见 §4.5 / §4.11）：
+    `VillageGenerator.BuildChunk` 开头写入当前区块的地貌 / 聚落 / 种子，内容定义在 `Create` 里读它
+    （石头按地貌挑配色）。生成是同步的、一个区块接一个区块，所以运行时的别处读到的是**上一个区块的残值**，
+    不要拿它当全局状态用。
+37. **验证运行时行为前必须先把存档保住**（2026-09-25 定，血泪）：
+    `exec_runtime_script` 里「一进 Play 就关 AutoSave」是**来不及的** —— 编辑器失焦会触发
+    `AutoSave.OnApplicationFocus(false) → SaveNow()`，它在脚本跑起来之前就把**本局测试状态**写进了存档
+    （2026-09-25 实测：存档被写上 seed=1293660263 / playSeconds=0.02 / 进度全 0）。
+    正确做法：**进 Play 前把 `%USERPROFILE%\AppData\LocalLow\<公司>\<产品>\whatabug_save.json` 复制一份，
+    验证完（`unity_editor.stop` 之后）再拷回去**；运行时脚本里顺手关 AutoSave 只是第二道保险。
+38. **路口瓦片「路在哪几边」必须按像素量，不能按名字猜；铺之前先确认它的底色**
+    （2026-09-25 定，见 §4.13）：这套包的路面占画布 36/128（= `roadTileRoadRatio`），
+    `t-intersection-up` 是**缺下边**（三个方向有路），`roadhead-up` 是**路从下往上、在顶端收口** ——
+    猜错一个方向就是「路在田里拐弯 / 断头路」。瓦片自带**草地底色**，所以只在草原（非城市）铺；
+    铺到沙漠会露绿块。换一包美术时：
+    ① 重新量 `roadTileRoadRatio`（`120px` 那一列纵向连续路面像素 ÷ 画布宽度）；
+    ② 量 4 个边中点的颜色，确认每张瓦片的路在哪几边；
+    ③ 改 `ArtOverride.Aliases` 把文件名对到 `road_*`（注意 `t-intersectiom-right` 是拼错的）。
+39. **邻居区块的路型必须能「纯函数」重算，而且重算必须和实际生成一致**（2026-09-25 定，见 §4.13）：
+    `RoadPresent` = 以区块种子为种子、拿路几率做门槛抽的**第一个**随机数（`new System.Random(Hash(seed,x,y)).NextDouble()`），
+    路型另用一个哈希随机数（`shapeRng`），朝向再用一个（`TurnIndex`）—— 三个都不许吃实例 `rng`
+    的顺序。`PickRoadShape()` 实例版**照样调一次 `Chance(roadChance)`**，只为让后面的随机序列和以前一模一样
+    （不然同种子的村子会全部换个样）。**如果以后有人在 `BuildChunk` 里、建路之前先用 rng，这条就废了**，
+    那时候 `RoadPresent` 的重算会和邻居实际生成的不一致 → 表现出来是「好端端的路上突然收口」
+    或者「路直接铺进没有路的地块」。
+40. **头顶表情只有一个槽位，优先级写死在 `UpdateAlertMark`**（2026-09-25 定，见 §4.14）：
+    不要再往村民头顶挂第二个气泡 / 第二个「!」；`SetEmoji` 是唯一的出口，
+    它负责「有图用图、没图退回程序化「!」、都没有就不显示」。表情是**有寿命**的
+    （`emojiSeconds` 到点自己消失），靠 `Update` 每帧刷 —— 所以**别把 `UpdateAlertMark()` 从 `Update` 里删掉**。
+41. **整身村民图（`villager`）必须是「整图素材」且不染职业色**（2026-09-25 定，见 §4.14）：
+    ① 它在 `Slots` 里要标 `whole`（导入时按不透明内容裁边）—— 美术把 33×48 的人画在 128×128 画布正中，
+    不裁的话人物只有应有大小的四分之一、还会浮在半空；
+    ② **不要给它 `tint`**：图里已经画好衣服，染职业色会把整张图糊成一团色块
+    （原来的 `villager_body` / `villager_head` 才是染色那条路）；
+    ③ 摆法用 `AddWholeImage`，脚底对齐 `villagerFootY`（−0.38，= 原来「身子 + 头」的脚底），
+    换图之后脚还站在地上；`visual` 这个子物体必须留着（左右翻转与挤压都作用在它上面，见红线 2）。
+42. **「整栋建筑」类 key 也必须标 `whole`**（2026-09-25 定，见红线 35）：`house_*` 六个房型 + `stall` + `windmill`
+    是美术「画在画布中间」的整图，不裁边会**整栋浮在占地里**（底边对到透明边，看着像飘着）。
+    改这类标记之后，**已经导入过的图要清 `.meta` 的 `userData` 再重导**（脚本里 `SaveAndReimport` 一次即可），
+    否则 `whole` 不会生效 —— 实测就是这么踩到的：只改代码不改导入设置，房子照样不裁边。
+43. **`SpriteRenderer.drawMode = Tiled` 是按「精灵自己的自然尺寸」重复的，不是按你给的 `size`**
+    （2026-09-25 定，用户报的「路面呈条纹状」就是这条）：
+    瓦片图 128px ÷ 64PPU = **2 世界单位**，而路面要 12 宽 —— 于是 12 宽的 sprite 里并排重复了 **6 次**，
+    画出来是 6 条细条纹（像素实测：Tiled → 横跨路量到 5~6 段、每段 0.5 出头；Sliced → 1 段、3.25 宽）。
+    - 想让重复间距 = 某个世界尺寸，得同时改 `transform.localScale`（= 目标尺寸 ÷ 精灵自然尺寸）
+      并把 `size` 除以同一个系数；**直路段不需要这么麻烦** —— 瓦片里的路是**通长一条**，
+      沿路方向拉伸不影响路宽，所以直接用 `Sliced` 就是对的（拉伸量实测 0.82~1.18，看不出来）。
+    - 反过来：**草地这种「本来就该按原图密度平铺」的贴图用 `Tiled` 是正确的**
+      （`ground` / `ground_desert` / `road` 都是这个用法，它们的 PPU 是按原素材世界宽度反推的）。
+      判断标准是「这张图的自然尺寸是不是就应该是它的世界尺寸」。
+44. **横向的臂要用「横向」的直路瓦片，纵向的臂要用「纵向」的**（2026-09-25 定；搞反过一次）：
+    `road_straight_h`（`path2`）图里的路沿 X 走 → 给**左右臂**；`road_straight_v`（`path1`）→ 给**上下臂**。
+    搞反的表现不是「看不出来」，而是**每一段路中央横着一条挡板**（路被画成垂直于行进方向），
+    再叠上红线 43 的重复，整条路就完全不成形了。
+    自检：`RoadStraight` 的 `size` 与图的对应关系 —— 横向臂 `size = (length, tile)` 且 `sprite.name == "path2"`；
+    纵向臂 `size = (tile, length)` 且 `sprite.name == "path1"`。
+    **改完脚本先 `unity_editor.refresh` 再进 Play 验证**（否则跑的是旧程序集 —— 这次就白测了一轮，
+    见 §8 与「验证」那节的同类提醒）。
+45. **刚加/刚改的 `public` 字段值在「场景里已经存在的那个组件实例」上不会自动刷新**（2026-09-25 踩到）：
+    Unity 是反序列化场景里的组件实例的 —— 加一个新字段时它会拿到当时的默认值，之后你把代码里的默认值
+    改掉，**场景里那个实例仍然留着旧值**（`refresh` 重编译也不会重跑字段初始化器）。
+    这次就是：`groundFeatherWidth` 从 2 改成 3，编辑器里量出来还是 2（进 Play 重新加载场景才是 3）。
+    所以**改默认值之后要显式把值写回场景里的实例**（脚本里 `gen.xxx = 新值; EditorUtility.SetDirty(gen);`），
+    否则下次保存场景就把旧值烤进去了。同类的还有：`MonoBehaviour` 上「后来才加」的字段在旧场景里是 `default(T)`
+    （bool 变 false、数值变 0），**别指望它等于代码里的默认值** —— 涉及开关的（`useRoadTiles` 这种）
+    改动后一定要在编辑器里 Read 一次确认。
+46. **半透明的「柔边圈 / 叠加层」必须压在要盖的东西之下、且不能盖到不想盖的东西上**（2026-09-25 定，见 §4.15）：
+    给地面 / 广场加柔边（`AddFeatherRing`）时，order 要**低于道路**（−885 ~ −882），
+    否则路面上会蒙一层脏色；而且**不要靠缩小不透明区域来制造「更小」的观感** ——
+    同地貌的相邻区块之间会露出底下的草线（比硬边更难看）。「更小」只能靠外圈渐变实现。
+47. **瓦片路网里，路面上（尤其正中那一块）只能用道路砖块，不许拿路面贴图去接**
+    （2026-09-25 用户：「道路中间不要用除了道路砖块之外的砖块接驳」）：
+    瓦片里的路和 `road` 那张程序化贴图**既不同色也不同纹理**，混在一起就是路中间一块异色方块。
+    所以 `BuildTiledRoad` 里：有路口瓦片用路口瓦片；**直路区块（只有左右 / 只有上下）要用同方向的
+    直路瓦片在正中收口**（`straightH` / `straightV` —— 它的路是「通长」的，正好把两条臂接起来），
+    并让直路段从**瓦片边缘**（`tile/2`）开始铺；只有连直路瓦片都没交时才退回路面贴图。
+    自检（编辑器里量，不用 Play）：挑一块**会铺瓦片**的区块（`NatureAt == Grassland` 且非城市），
+    看正中那个 `Road` / `RoadJunction` / `RoadStraight` 的 `sprite.name` —— **不能是 `T_Road`**
+    （2026-09-25 实测：修之前 8 个区块是 `T_Road`，修之后 45 个会铺瓦片的区块里 T_Road = 0、
+    其余全是 `path1` / `path2` / `corner-*` / `cross`）。
+    注意：**森林 / 沙漠 / 城市本来就不铺瓦片**（见 §4.13 的两条硬限制），那边整条路都是路面贴图，
+    不存在「混接」问题 —— 别把它们也算成 bug。
 
 ---
 
@@ -714,6 +1026,9 @@ Set-Content -Path "$tmp\csc.rsp" -Value $lines -Encoding UTF8
 | 存档 | `%USERPROFILE%\AppData\LocalLow\<公司>\<产品>\whatabug_save.json` |
 | 玩家设置 | `PlayerPrefs`：`game.volume`、`menu.resWidth/resHeight/fullscreen` |
 | 世界生成 | 地貌 / 聚落与所有生成参数都在 `Assets/Scripts/WorldBiome.cs`；按地貌分家的内容在 `Assets/Scripts/ContentPack.cs` |
+| 瓦片路网 | `VillageGenerator` 的 `useRoadTiles` / `roadTilesEverywhere` / `roadTileRoadRatio`（路面占画布比例，这套是 0.28125）；路型与朝向的**纯函数** `PickRoadShape` / `RoadPresent` / `TurnIndex` / `ArmsAt`（见 §4.13） |
+| 整身村民 / 头顶表情 | 整身图 `ArtKeys.Villager`（`VillageGenerator.villagerVisualHeight` / `villagerFootY`）；表情表 `Villager.EmojiFor`、大小与寿命 `emojiSize` / `emojiHeight` / `emojiSeconds`（见 §4.14） |
+| 城堡 / 杂项建筑 | `VillageGenerator.castleChance`（城市稀有地标）/ `extraHouseChance`（每栋房子改用整图的几率） |
 | 存档版本 | **v6**（v6 = 取消地图选择、改记地貌与聚落；v5 = 删任务模块；v4 = 混乱/警觉/统计；v3 = 能力；v2 = 地图类型） |
 | 日志 | 编辑器日志 `%LOCALAPPDATA%\Tuanjie\Editor\Editor.log`；工程内 `Logs/` |
 | 运行时日志前缀 | `[Bug]` / `[ArtOverride]` / `[AudioOverride]` |

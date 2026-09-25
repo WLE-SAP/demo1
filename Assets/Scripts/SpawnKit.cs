@@ -57,6 +57,27 @@ public class SpawnRule
         return this;
     }
 
+    // ---------------- 按地貌 / 聚落缩放权重（2026-09-25 加）----------------
+    //
+    // 门控（InNatures / InSettlements）解决的是「能不能出现」，
+    // 这里解决的是「在哪片地貌更常见」—— 例如石头在沙漠到处都是、在森林很少见。
+    // 倍数只影响「位」抽签（weight），不影响 Fixed 的固定数量。
+
+    /// <summary>按自然体系缩放 <see cref="weight"/>（可选，没写 = 1 倍）。</summary>
+    public System.Func<NatureKind, float> weightInNature;
+
+    /// <summary>按聚落缩放 <see cref="weight"/>（可选，没写 = 1 倍）。</summary>
+    public System.Func<SettlementKind, float> weightInSettlement;
+
+    /// <summary>这个区块里它实际的抽签权重 = <see cref="weight"/> × 地貌倍率 × 聚落倍率。</summary>
+    public float WeightOf(SettlementKind settlement, NatureKind nature)
+    {
+        float result = weight;
+        if (weightInNature != null) result *= weightInNature(nature);
+        if (weightInSettlement != null) result *= weightInSettlement(settlement);
+        return Mathf.Max(0f, result);
+    }
+
     /// <summary>找空地时的占地半径（越大越难挤进密集的地方）。</summary>
     public float clearance = 0.3f;
 
@@ -162,8 +183,9 @@ public static class SpawnKit
     }
 
     /// <summary>
-    /// 从目录里按权重抽一个（跳过 weight = 0 的、以及当前区块的聚落 / 自然体系不允许的）；
+    /// 从目录里按权重抽一个（跳过权重为 0 的、以及当前区块的聚落 / 自然体系不允许的）；
     /// 一个都抽不到（没注册 / 权重全 0 / 都不允许）时返回 null。
+    /// 权重是 <see cref="SpawnRule.WeightOf"/>（基础权重 × 地貌倍率 × 聚落倍率）。
     /// </summary>
     public static T PickWeighted<T>(List<T> definitions, System.Random rng, SettlementKind settlement, NatureKind nature)
         where T : class, IContentDefinition
@@ -173,7 +195,7 @@ public static class SpawnKit
         {
             T def = definitions[i];
             if (!Eligible(def, settlement, nature)) continue;
-            total += def.Spawn.weight;
+            total += def.Spawn.WeightOf(settlement, nature);
         }
         if (total <= 0f) return null;
 
@@ -184,7 +206,7 @@ public static class SpawnKit
             T def = definitions[i];
             if (!Eligible(def, settlement, nature)) continue;
             last = def;
-            roll -= def.Spawn.weight;
+            roll -= def.Spawn.WeightOf(settlement, nature);
             if (roll <= 0f) return def;
         }
         return last;
@@ -192,7 +214,46 @@ public static class SpawnKit
 
     static bool Eligible<T>(T def, SettlementKind settlement, NatureKind nature) where T : class, IContentDefinition
     {
-        return def != null && def.Spawn != null && def.Spawn.weight > 0f
+        return def != null && def.Spawn != null
+            && def.Spawn.WeightOf(settlement, nature) > 0f
             && def.Spawn.Includes(settlement, nature);
+    }
+}
+
+/// <summary>
+/// **生成时的「当前区块」上下文**：内容定义在造物体时想知道「这是哪片地貌 / 聚落」、
+/// 或者「这块地方该用哪张变体图」时读它（例如石头按地貌挑灰的还是土黄的）。
+///
+/// 由 <see cref="VillageGenerator.BuildChunk"/> 在每个区块开头写入。生成是同步的、一个区块接一个区块，
+/// 所以它只在**生成期间**有意义 —— 运行时的别处读到的是上一个区块的残值，不要拿它当全局状态用。
+/// </summary>
+public static class SpawnContext
+{
+    /// <summary>当前区块的自然体系。</summary>
+    public static NatureKind Nature = NatureKind.Grassland;
+
+    /// <summary>当前区块的聚落体系。</summary>
+    public static SettlementKind Settlement = SettlementKind.Wilderness;
+
+    /// <summary>当前区块的种子（<see cref="VillageGenerator"/> 里 <c>Hash(worldSeed, x, y)</c> 的结果），位置哈希的盐。</summary>
+    public static int Seed;
+
+    /// <summary>
+    /// 位置 + 盐 → [0,1) 的**确定性**随机数：同一块地方每次生成都得到同一个值，
+    /// 所以「这块石头是灰的还是土黄的」走远再回头、读档回来都不会变（区块是按种子重建的，见 Spec §4.2）。
+    /// </summary>
+    public static float Roll01(Vector2 position, int salt)
+    {
+        unchecked
+        {
+            // 位置按 1/16 世界单位取整：相邻两个物件的取值互不相干
+            int x = Mathf.RoundToInt(position.x * 16f);
+            int y = Mathf.RoundToInt(position.y * 16f);
+            uint h = (uint)(x * 374761393 + y * 668265263 + Seed * 1442695041 + salt * 2246822519);
+            h ^= h >> 13;
+            h *= 1274126177u;
+            h ^= h >> 16;
+            return (h & 0xFFFFFFu) / 16777216f;
+        }
     }
 }

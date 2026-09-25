@@ -39,7 +39,11 @@ public class DragController : MonoBehaviour
         // 这时要清掉引用并恢复小虫的移速，否则它会一直处于「搬运中」的慢速状态
         if (held == null)
         {
-            if (bug != null) bug.IsDragging = false;
+            if (bug != null)
+            {
+                bug.IsDragging = false;
+                bug.HeldSpeedMultiplier = 0f;
+            }
             return;
         }
         Carry();
@@ -64,7 +68,12 @@ public class DragController : MonoBehaviour
 
         held = target;
         SetSimulated(held, false);
-        if (bug != null) bug.IsDragging = true;
+        if (bug != null)
+        {
+            bug.IsDragging = true;
+            // 逐件的搬运移速惩罚（越大的石头越慢；物品没写就用 BugController 的默认值）
+            bug.HeldSpeedMultiplier = held.speedMultiplier;
+        }
         AudioOverridePlayer.Play(AudioKeys.Pickup);
 
         // 搬东西是有动静的（拿起很轻）
@@ -138,7 +147,11 @@ public class DragController : MonoBehaviour
         Vector2 dropAt = held.transform.position;
         SetSimulated(held, true);
         held = null;
-        if (bug != null) bug.IsDragging = false;
+        if (bug != null)
+        {
+            bug.IsDragging = false;
+            bug.HeldSpeedMultiplier = 0f;
+        }
         AudioOverridePlayer.Play(AudioKeys.Drop);
 
         // 把箱子砸在地上是很响的 —— 「扔给村民听」本身就是玩法

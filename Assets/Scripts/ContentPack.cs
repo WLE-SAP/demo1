@@ -488,14 +488,14 @@ public static class ContentPack
             title = "灯笼",
             kind = "道具",
             description = "挂在门口的小灯笼。可以搬走 —— 搬着它在夜里也看得清。",
-            orderOffset = 14,
+            orderOffset = 2,          // 挂了 YSort，所以这里只是「相对偏移」（见 ItemDefinition.orderOffset）
             spawn = SpawnRule.Pool(6f, 0.4f, 0.25f, 0.45f)
                 .InSettlements(SettlementKind.Village, SettlementKind.City),
             decorate = go =>
             {
                 // 灯火：白天几乎看不见，夜里亮起来（和路灯 / 窗户共用 NightGlow）
                 SpriteRenderer body = go.GetComponentInChildren<SpriteRenderer>();
-                int order = body != null ? body.sortingOrder : SpawnKit.YOrder(go.transform.position.y) + 14;
+                int order = body != null ? body.sortingOrder : 2;      // 同样是相对偏移（挂了 YSort）
                 SpriteRenderer glow = ArtShapes.AddSprite(go.transform, "Glow", ArtShape.Round, 1.5f,
                     Vector2.zero, new Color(1f, 0.90f, 0.60f, 0f), order - 1);
                 NightGlow night = glow.gameObject.AddComponent<NightGlow>();

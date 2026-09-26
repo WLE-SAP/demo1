@@ -52,7 +52,8 @@ public static class WorldBiome
 
     /// <summary>
     /// **全局密度系数**（原 <c>MapProfiles.Density</c>）：房子 / 树 / 灌木 / 仙人掌 / 食物位 / 物品位 /
-    /// 各类设施几率都乘它，村民数量**不乘**（人口直接影响性能与手感，单独调）。
+    /// 各类设施几率都乘它，村民数量**不直接乘**（人口影响性能与手感，走
+    /// <see cref="VillagersPerHouse"/> —— 2026-09-26 起人口 = 房子数 × 入住率，所以房子密了人也跟着多）。
     /// </summary>
     public const float Density = 1.8f;
 
@@ -214,31 +215,20 @@ public static class WorldBiome
 
     // ---------------- 世界流式加载（按当前区块的聚落取值） ----------------
 
-    /// <summary>要不要「保证视野里有人」（荒野不补人，人少才像荒野）。</summary>
-    public static bool KeepVillagersInView(SettlementKind settlement)
-    {
-        return settlement != SettlementKind.Wilderness;
-    }
-
-    /// <summary>可见范围里至少要有几个村民。</summary>
-    public static int MinVillagersInView(SettlementKind settlement)
-    {
-        switch (settlement)
-        {
-            case SettlementKind.City: return 5;
-            case SettlementKind.Village: return 2;
-            default: return 0;
-        }
-    }
-
-    /// <summary>每个区块最多为此补几个村民（防止人越补越多）。</summary>
-    public static int MaxExtraPerChunk(SettlementKind settlement)
+    /// <summary>
+    /// **每栋房子平均住几个人**（2026-09-26 起）。
+    /// 村民数量不再是「一个跟房子无关的常数」，而是 **本区块房子数 × 它**（再乘一点随机、夹在上下限里，
+    /// 见 <see cref="VillageGenerator.BuildVillagers"/>）：房子密的地方人多、独门独户的农舍只有一两口人。
+    /// 原先的「屏幕里必须站着几个村民」那条规则已经删掉 —— 缺的人口由
+    /// <see cref="VillageWorld"/> 在**玩家看不见的地方**补上。
+    /// </summary>
+    public static float VillagersPerHouse(SettlementKind settlement)
     {
         switch (settlement)
         {
-            case SettlementKind.City: return 6;
-            case SettlementKind.Village: return 4;
-            default: return 0;
+            case SettlementKind.City: return 0.6f;        // 城市：一栋楼里挤好几户
+            case SettlementKind.Village: return 0.45f;    // 农村
+            default: return 0.5f;                         // 荒野：只有小木屋，最多一两个人
         }
     }
 
@@ -277,7 +267,7 @@ public static class WorldBiome
                 g.bushMin = 2; g.bushMax = 5;
                 g.foodSlotsMin = 6; g.foodSlotsMax = 10; // 没人打理，野生食物反而多
                 g.itemSlotsMin = 0; g.itemSlotsMax = 1;
-                g.villagerMin = 0; g.villagerMax = 1;
+                g.villagerMin = 0; g.villagerMax = 1;    // 人口 = 房子数 × 入住率，最多一两口人
                 g.burrowMin = 1; g.burrowMax = 3;        // 野外的洞更多（躲与传送）
                 g.buildFacilities = false;
                 g.plazaChance = 0f;
@@ -288,6 +278,10 @@ public static class WorldBiome
                 g.campfireChance = 0.4f;
                 g.roadWidth = RoadWidthOf(settlement);
                 g.roadChance = RoadChanceOf(settlement);   // 大半区块根本没有路
+                // 野外：全是单门独户（木屋本来就是散着的），周围给一片田地
+                g.isolatedHouseShare = 1f;
+                g.clusterMin = 1; g.clusterMax = 1;
+                g.steadingChance = 0.5f;
                 break;
 
             case SettlementKind.City:
@@ -299,7 +293,7 @@ public static class WorldBiome
                 g.bushMin = 0; g.bushMax = 2;
                 g.foodSlotsMin = 8; g.foodSlotsMax = 12;
                 g.itemSlotsMin = 1; g.itemSlotsMax = 3;
-                g.villagerMin = 6; g.villagerMax = 9;
+                g.villagerMin = 2; g.villagerMax = 10;   // 人口 = 房子数 × 入住率（城市 0.6）
                 g.burrowMin = 0; g.burrowMax = 2;
                 g.buildFacilities = true;
                 g.plazaChance = 0.7f;
@@ -318,6 +312,10 @@ public static class WorldBiome
                 g.stallChance = 0.95f;
                 g.gardenChance = 0.5f;
                 g.boardChance = 0.5f;
+                // 城市：房子几乎都在街区里抱团（广场 / 大街边），单门独户的很少
+                g.isolatedHouseShare = 0.12f;
+                g.clusterMin = 3; g.clusterMax = 4;
+                g.steadingChance = 0.5f;
                 break;
 
             default:                                     // 农村
@@ -326,7 +324,7 @@ public static class WorldBiome
                 g.bushMin = 2; g.bushMax = 5;
                 g.foodSlotsMin = 5; g.foodSlotsMax = 8;
                 g.itemSlotsMin = 0; g.itemSlotsMax = 2;
-                g.villagerMin = 2; g.villagerMax = 4;
+                g.villagerMin = 1; g.villagerMax = 8;    // 人口 = 房子数 × 入住率（农村 0.45）
                 g.burrowMin = 0; g.burrowMax = 2;
                 g.buildFacilities = true;
                 g.plazaChance = 0.55f;
@@ -345,6 +343,10 @@ public static class WorldBiome
                 g.stallChance = 0.8f;
                 g.gardenChance = 0.7f;
                 g.boardChance = 0.4f;
+                // 农村：大部分人家挤在路边 / 井边成几个院群，小部分单门独户（周围一片大农田）
+                g.isolatedHouseShare = 0.22f;
+                g.clusterMin = 2; g.clusterMax = 3;
+                g.steadingChance = 0.85f;
                 break;
         }
     }

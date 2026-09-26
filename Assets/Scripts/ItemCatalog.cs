@@ -50,8 +50,14 @@ public class ItemDefinition : IContentDefinition
     /// <summary>颜色（程序化外观用；放了图片时会被刷成白色）。</summary>
     public Color color = Color.white;
 
-    /// <summary>初始排序偏移（挂了 <see cref="YSort"/> 时它只是层级内的相对偏移）。</summary>
-    public int orderOffset = 10;
+    /// <summary>
+    /// 外观的排序。**注意这里是「两种语义」**（见 <see cref="YSort"/>）：
+    /// 开了 <see cref="useYSort"/> 时，子精灵的 sortingOrder 会被 YSort 当成**相对根节点的偏移**缓存下来，
+    /// 所以只能给一个小偏移（默认 1）；只有没开 YSort 的物件（电线）才需要**绝对**排序值。
+    /// **别写成 `yOrder + orderOffset` 再挂 YSort** —— 那样 Y 会被算两遍，
+    /// 物件会被顶到整个世界前面（2026-09-26 实测：木桶 / 石头 / 水泵的 Visual 序号比应得的高了 1300+）。
+    /// </summary>
+    public int orderOffset = 1;
 
     // ---------------- 交互 ----------------
     /// <summary>能不能按 F 搬起来。</summary>
@@ -220,13 +226,16 @@ public static class ItemCatalog
 
         float size = Mathf.Max(0.05f, Random.Range(definition.sizeMin, Mathf.Max(definition.sizeMin, definition.sizeMax)));
 
+        // 见 orderOffset 的注释：挂 YSort 时只能给「相对偏移」，没挂的才给绝对排序值
+        int visualOrder = definition.useYSort ? definition.orderOffset : yOrder + definition.orderOffset;
+
         SpriteRenderer sr;
         Sprite wholeArt = definition.wholeArt ? PickWholeArt(definition, position) : null;
         if (wholeArt != null)
         {
             // 整图素材（石头这类）：按内容比例把图摆进 size × size 的占地、底边贴地。
             // 地图放在「Visual」子物体上，和下面那条路保持同一套结构（逻辑在根上、外观在 Visual 上）。
-            sr = ArtShapes.AddWholeImage(go.transform, "Visual", wholeArt, size, Vector2.zero, yOrder + definition.orderOffset);
+            sr = ArtShapes.AddWholeImage(go.transform, "Visual", wholeArt, size, Vector2.zero, visualOrder);
         }
         else
         {
@@ -240,7 +249,7 @@ public static class ItemCatalog
             sr.drawMode = definition.sliced ? SpriteDrawMode.Sliced : SpriteDrawMode.Simple;
             if (definition.sliced) sr.size = Vector2.one;
             sr.color = definition.color;
-            sr.sortingOrder = yOrder + definition.orderOffset;
+            sr.sortingOrder = visualOrder;
             if (!string.IsNullOrEmpty(definition.artKey)) ArtOverride.Apply(sr, definition.artKey);
         }
 

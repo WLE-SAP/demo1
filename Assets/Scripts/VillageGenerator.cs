@@ -155,6 +155,35 @@ public class VillageGenerator : MonoBehaviour
     [Tooltip("城市里出现城堡（castle）的几率：稀有地标，只有城市会掷这一次")]
     [Range(0f, 1f)] public float castleChance = 0.08f;
 
+    // ---------------- 房屋分布（2026-09-26 用户要求）----------------
+    // 「大部分房子成集群、出现在路边 / 水井边；小部分单独出现，周围是大片农田、一般没有路」。
+    // 集群个数 / 独户比例由 WorldBiome 按聚落覆盖（同 houseMin 那批字段）。
+
+    [Header("房屋分布：集群 / 独门独户（2026-09-26）")]
+    [Tooltip("**单独出现**的房子占的比例（其余都围成集群）。荒野全是独门独户 → 1")]
+    [Range(0f, 1f)] public float isolatedHouseShare = 0.22f;
+    [Tooltip("集群个数（房子围着这些点长）")]
+    public int clusterMin = 2;
+    public int clusterMax = 3;
+    [Tooltip("一个集群的半径（世界单位）：房子的落点在这个圈里，看起来才像「一伙的」")]
+    public float clusterRadius = 7f;
+    [Tooltip("集群中心落在「路边」的比例（其余落在水井 / 喷泉边）—— 路边和水井边更容易出现房子")]
+    [Range(0f, 1f)] public float roadClusterShare = 0.6f;
+    [Tooltip("集群中心从路面中线往路边挪多少（世界单位，实际还要再加半个路宽）")]
+    public float roadSideOffset = 1.6f;
+    [Tooltip("独门独户的房子：离最近的路至少多远（世界单位）—— 「一般没有道路经过」")]
+    public float isolatedRoadClearance = 6f;
+    [Tooltip("独门独户的房子与其他建筑之间的间距（世界单位）—— 留出一点空地才像「单门独户」")]
+    public float isolatedSpacing = 1.5f;
+    [Tooltip("独门独户的房子周围那片「大农田 / 畜栏」的出现几率。城市里换成花园")]
+    [Range(0f, 1f)] public float steadingChance = 0.85f;
+    [Tooltip("房与房之间的最小间距（集群内部也用它）")]
+    public float houseSpacing = 1f;
+    [Tooltip("独门独户的农家院那片农田有多大（宽的范围，世界单位）—— 要「大片」")]
+    public Vector2 steadingFarmWidth = new Vector2(6.5f, 9.5f);
+    [Tooltip("独门独户的农家院那片农田有多高（范围，世界单位）")]
+    public Vector2 steadingFarmHeight = new Vector2(4.4f, 6.0f);
+
     [Header("锚点表")]
     [Tooltip("设施锚点表；留空会自动找场景里的 VillageMap")]
     public VillageMap map;
@@ -546,7 +575,14 @@ public class VillageGenerator : MonoBehaviour
     /// </summary>
     bool AddWholeBuilding(Transform parent, string key, Rect area, int order, string name = "WholeBuilding")
     {
-        return AddWholeBuilding(parent, key, ArtOverride.Get(key), area, order, name);
+        Rect drawn;
+        return AddWholeBuilding(parent, key, area, order, out drawn, name);
+    }
+
+    /// <summary>同上，另外把「图实际画在哪一块」用**物体的本地坐标**交出去（碰撞体按它算，见 <see cref="AddBuildingFootprint"/>）。</summary>
+    bool AddWholeBuilding(Transform parent, string key, Rect area, int order, out Rect drawn, string name = "WholeBuilding")
+    {
+        return AddWholeBuilding(parent, key, ArtOverride.Get(key), area, order, name, out drawn);
     }
 
     /// <summary>
@@ -554,16 +590,40 @@ public class VillageGenerator : MonoBehaviour
     /// 按区块挑一张用。注意这种情况下 <c>key</c> 只用来记账（<see cref="ArtOverride.Get"/> 会取回第一张变体，
     /// 那样挑出来的变体就被覆盖了），所以这里不走 <c>AddSlice</c> 的 key 参数。
     /// </summary>
-    bool AddWholeBuilding(Transform parent, string key, Sprite image, Rect area, int order, string name = "WholeBuilding")
+    bool AddWholeBuilding(Transform parent, string key, Sprite image, Rect area, int order, string name, out Rect drawn)
     {
+        // 没有图时「画出来的建筑」就当作整块占地（调用方照旧按它算碰撞体）
+        drawn = new Rect(-area.width * 0.5f, -area.height * 0.5f, area.width, area.height);
         if (image == null) return false;
 
         float aspect = image.rect.width / Mathf.Max(1f, image.rect.height);
         float h = Mathf.Min(area.height, area.width / aspect);
         float w = h * aspect;
         Vector2 local = new Vector2(0f, area.yMin - area.center.y + h * 0.5f);
+        drawn = new Rect(-w * 0.5f, local.y - h * 0.5f, w, h);
         AddSlice(parent, name, image, new Vector2(w, h), local, Color.white, order);
         return true;
+    }
+
+    /// <summary>碰撞体「脚印」的高 = 宽的这么多倍（用户 2026-09-26 定的：宽 = 建筑图案的宽、高 = 宽的 2/3）。</summary>
+    const float FootprintHeightRatio = 2f / 3f;
+
+    /// <summary>
+    /// 建筑物的碰撞体（2026-09-26 用户要求）：**不再是一整块占地**，而是「贴着画出来的建筑」的一块脚印 ——
+    /// **宽 = 建筑图案的宽、高 = 宽的 2/3**、底边压在建筑底边上（高不会超过建筑本身的高度）。
+    ///
+    /// 为什么：整栋建筑图是按原比例 contain 进占地的，图没填满的那部分以前也压着一块碰撞体，
+    /// 于是建筑周边多出一圈**看不见的墙**。改成脚印以后，房子的上半截（画的是屋顶 / 二楼）可以走进去 ——
+    /// 小虫能钻到房子后面，从主视角看正好被房子挡住（房子的排序取它自己的中心 Y，
+    /// 待在房子靠上那一半的小虫 Y 更大、画在房子底下）。
+    /// </summary>
+    void AddBuildingFootprint(GameObject go, Rect drawn)
+    {
+        float width = Mathf.Max(0.6f, drawn.width);
+        float height = Mathf.Min(drawn.height > 0.1f ? drawn.height : width, width * FootprintHeightRatio);
+        BoxCollider2D collider = go.AddComponent<BoxCollider2D>();
+        collider.size = new Vector2(width, height);
+        collider.offset = new Vector2(drawn.center.x, drawn.yMin + height * 0.5f);
     }
 
     // ---------------- 地貌地面 ----------------
@@ -1197,10 +1257,9 @@ public class VillageGenerator : MonoBehaviour
             go.transform.position = new Vector3(area.center.x, area.center.y, 0f);
 
             Sprite image = ArtOverride.PickVariant(ArtKeys.Castle, null, (float)rng.NextDouble());
-            AddWholeBuilding(go.transform, ArtKeys.Castle, image, area, YOrder(area.center.y), "CastleImage");
-
-            BoxCollider2D collider = go.AddComponent<BoxCollider2D>();
-            collider.size = new Vector2(area.width * 0.9f, area.height * 0.82f);
+            Rect drawn;
+            AddWholeBuilding(go.transform, ArtKeys.Castle, image, area, YOrder(area.center.y), "CastleImage", out drawn);
+            AddBuildingFootprint(go, drawn);
             if (map != null) map.AddAnchor("castle", area.center);
             return;
         }
@@ -1252,8 +1311,8 @@ public class VillageGenerator : MonoBehaviour
             AddRect(go.transform, "Pole", new Vector2(0.16f, 0.9f), new Vector2(w * 0.5f + 0.5f, h * 0.2f),
                 new Color(0.35f, 0.30f, 0.26f), order, key: ArtKeys.PowerPole);
 
-            BoxCollider2D collider = go.AddComponent<BoxCollider2D>();
-            collider.size = new Vector2(w, h);
+            // 厂房是「长方块画满整个占地」那种：图案的宽高就是 w / h
+            AddBuildingFootprint(go, new Rect(-w * 0.5f, -h * 0.5f, w, h));
 
             // 它是一台「通电才工作」的机器：附近电线被剪断就会停
             PoweredProp prop = go.AddComponent<PoweredProp>();
@@ -1300,7 +1359,8 @@ public class VillageGenerator : MonoBehaviour
             int order = YOrder(c.y);
 
             // 整栋风车图（叶片也画在图上）：放了这张图就整栋用图，不再生成会转的叶片（会重复画两套叶片）
-            if (!AddWholeBuilding(go.transform, ArtKeys.Windmill, area, order))
+            Rect drawn;
+            if (!AddWholeBuilding(go.transform, ArtKeys.Windmill, area, order, out drawn))
             {
                 AddSlice(go.transform, "Body", rectSprite, new Vector2(w, h), Vector2.zero,
                     new Color(0.82f, 0.76f, 0.62f), order, key: ArtKeys.WindmillBody);
@@ -1320,8 +1380,7 @@ public class VillageGenerator : MonoBehaviour
                 hub.AddComponent<Spinner>().degreesPerSecond = Rand(22f, 42f);
             }
 
-            BoxCollider2D collider = go.AddComponent<BoxCollider2D>();
-            collider.size = new Vector2(w, h);
+            AddBuildingFootprint(go, drawn);
 
             HiddenValue hidden = go.AddComponent<HiddenValue>();
             hidden.value = RandInt(20, 34);
@@ -1363,8 +1422,8 @@ public class VillageGenerator : MonoBehaviour
             // 光晕是运行时表现，不占美术 key（同路灯的 Glow / 头顶的「!」）
             SpriteRenderer halo = AddDisc(go.transform, "BellHalo", 2.6f, bellPos, new Color(1f, 0.92f, 0.60f, 0f), order + 1);
 
-            BoxCollider2D collider = go.AddComponent<BoxCollider2D>();
-            collider.size = new Vector2(w, h);
+            // 塔身画满占地：碰撞体只留塔基那一块（上半截能站人，塔会把小虫遮住）
+            AddBuildingFootprint(go, new Rect(-w * 0.5f, -h * 0.5f, w, h));
 
             BellTower tower = go.AddComponent<BellTower>();
             tower.halo = halo;
@@ -1476,28 +1535,36 @@ public class VillageGenerator : MonoBehaviour
             if ((c - center).magnitude < plazaSize * 0.5f + 4f) continue;      // 别贴着广场
             Rect area = new Rect(c.x - w * 0.5f, c.y - h * 0.5f, w, h);
             if (!IsFree(area, 1.2f)) continue;
-            occupied.Add(area);
-
-            GameObject go = new GameObject("Farm");
-            go.transform.SetParent(facilitiesRoot, false);
-            go.transform.position = new Vector3(c.x, c.y, 0f);
-
-            // 农田是「平铺在地上的」，放 Ground 层按固定次序排，
-            // 这样站在田里的小虫/村民一定画在田上面，不会被整块地遮住
-            AddSlice(go.transform, "Soil", rectSprite, new Vector2(w, h), Vector2.zero, new Color(0.37f, 0.27f, 0.18f), -870, true, ArtKeys.FarmSoil);
-
-            int rows = Mathf.Max(3, Mathf.FloorToInt(h / 0.6f));
-            for (int r = 0; r < rows; r++)
-            {
-                float rowY = -h * 0.5f + 0.45f + r * (h - 0.6f) / Mathf.Max(1, rows - 1);
-                AddRect(go.transform, "Row", new Vector2(w - 0.55f, 0.15f), new Vector2(0f, rowY), new Color(0.30f, 0.21f, 0.13f), -860, true, ArtKeys.FarmRow);
-                for (int k = 0; k < 3; k++)
-                    AddDisc(go.transform, "Sprout", 0.2f, new Vector2(-w * 0.3f + k * w * 0.3f, rowY + 0.07f), new Color(0.42f, 0.62f, 0.28f), -850, true, ArtKeys.FarmSprout);
-            }
-
-            if (map != null) map.farms.Add(c);
+            CreateFarm(area);
             return;
         }
+    }
+
+    /// <summary>按**给定地块**画一块农田（独门独户的农家院也用这个，只是那块地更大）。</summary>
+    void CreateFarm(Rect area)
+    {
+        occupied.Add(area);
+
+        GameObject go = new GameObject("Farm");
+        go.transform.SetParent(facilitiesRoot, false);
+        go.transform.position = new Vector3(area.center.x, area.center.y, 0f);
+
+        float w = area.width;
+        float h = area.height;
+        // 农田是「平铺在地上的」，放 Ground 层按固定次序排，
+        // 这样站在田里的小虫/村民一定画在田上面，不会被整块地遮住
+        AddSlice(go.transform, "Soil", rectSprite, new Vector2(w, h), Vector2.zero, new Color(0.37f, 0.27f, 0.18f), -870, true, ArtKeys.FarmSoil);
+
+        int rows = Mathf.Max(3, Mathf.FloorToInt(h / 0.6f));
+        for (int r = 0; r < rows; r++)
+        {
+            float rowY = -h * 0.5f + 0.45f + r * (h - 0.6f) / Mathf.Max(1, rows - 1);
+            AddRect(go.transform, "Row", new Vector2(w - 0.55f, 0.15f), new Vector2(0f, rowY), new Color(0.30f, 0.21f, 0.13f), -860, true, ArtKeys.FarmRow);
+            for (int k = 0; k < 3; k++)
+                AddDisc(go.transform, "Sprout", 0.2f, new Vector2(-w * 0.3f + k * w * 0.3f, rowY + 0.07f), new Color(0.42f, 0.62f, 0.28f), -850, true, ArtKeys.FarmSprout);
+        }
+
+        if (map != null) map.farms.Add(area.center);
     }
 
     /// <summary>畜栏：三面围栏 + 一群羊（南面留口子，牧羊人走进去）。</summary>
@@ -1511,32 +1578,40 @@ public class VillageGenerator : MonoBehaviour
             if ((c - center).magnitude < plazaSize * 0.5f + 5f) continue;
             Rect area = new Rect(c.x - w * 0.5f, c.y - h * 0.5f, w, h);
             if (!IsFree(area, 1.4f)) continue;
-            occupied.Add(new Rect(c.x - w * 0.5f - 0.4f, c.y - h * 0.5f - 0.4f, w + 0.8f, h + 0.8f));
-
-            GameObject go = new GameObject("Pen");
-            go.transform.SetParent(facilitiesRoot, false);
-            go.transform.position = new Vector3(c.x, c.y, 0f);
-
-            int order = YOrder(c.y) - 4;
-            Color fence = new Color(0.52f, 0.40f, 0.26f);
-            // 牧场草地也是平铺在地上的 → Ground 层，不会挡住里面的羊和牧羊人
-            AddSlice(go.transform, "Grass", rectSprite, new Vector2(w, h), Vector2.zero, new Color(0.38f, 0.48f, 0.26f), -845, true, ArtKeys.PenGrass);
-            AddRect(go.transform, "FenceN", new Vector2(w, 0.2f), new Vector2(0f, h * 0.5f), fence, YOrder(c.y + h * 0.5f) + 1, key: ArtKeys.Fence);
-            AddRect(go.transform, "FenceW", new Vector2(0.2f, h), new Vector2(-w * 0.5f, 0f), fence, order + 1, key: ArtKeys.Fence);
-            AddRect(go.transform, "FenceE", new Vector2(0.2f, h), new Vector2(w * 0.5f, 0f), fence, order + 1, key: ArtKeys.Fence);
-
-            for (int i = 0; i < 4; i++)
-            {
-                Vector2 p = new Vector2(Rand(-w * 0.32f, w * 0.32f), Rand(-h * 0.32f, h * 0.32f));
-                // 羊各自按自己的 Y 排序，站在羊附近的人才不会被羊挡住
-                int sheepOrder = YOrder(c.y + p.y) + 2;
-                AddDisc(go.transform, "Sheep", 0.52f, p, new Color(0.93f, 0.92f, 0.87f), sheepOrder, key: ArtKeys.Sheep);
-                AddDisc(go.transform, "SheepHead", 0.24f, p + new Vector2(0.24f, 0.14f), new Color(0.30f, 0.28f, 0.30f), sheepOrder + 1, key: ArtKeys.SheepHead);
-            }
-
-            if (map != null) map.pens.Add(c);
+            CreatePen(area);
             return;
         }
+    }
+
+    /// <summary>按**给定地块**画一个畜栏（独门独户的农家院也可能配这个）。</summary>
+    void CreatePen(Rect area)
+    {
+        occupied.Add(new Rect(area.xMin - 0.4f, area.yMin - 0.4f, area.width + 0.8f, area.height + 0.8f));
+
+        float w = area.width;
+        float h = area.height;
+        GameObject go = new GameObject("Pen");
+        go.transform.SetParent(facilitiesRoot, false);
+        go.transform.position = new Vector3(area.center.x, area.center.y, 0f);
+
+        int order = YOrder(area.center.y) - 4;
+        Color fence = new Color(0.52f, 0.40f, 0.26f);
+        // 牧场草地也是平铺在地上的 → Ground 层，不会挡住里面的羊和牧羊人
+        AddSlice(go.transform, "Grass", rectSprite, new Vector2(w, h), Vector2.zero, new Color(0.38f, 0.48f, 0.26f), -845, true, ArtKeys.PenGrass);
+        AddRect(go.transform, "FenceN", new Vector2(w, 0.2f), new Vector2(0f, h * 0.5f), fence, YOrder(area.center.y + h * 0.5f) + 1, key: ArtKeys.Fence);
+        AddRect(go.transform, "FenceW", new Vector2(0.2f, h), new Vector2(-w * 0.5f, 0f), fence, order + 1, key: ArtKeys.Fence);
+        AddRect(go.transform, "FenceE", new Vector2(0.2f, h), new Vector2(w * 0.5f, 0f), fence, order + 1, key: ArtKeys.Fence);
+
+        for (int i = 0; i < 4; i++)
+        {
+            Vector2 p = new Vector2(Rand(-w * 0.32f, w * 0.32f), Rand(-h * 0.32f, h * 0.32f));
+            // 羊各自按自己的 Y 排序，站在羊附近的人才不会被羊挡住
+            int sheepOrder = YOrder(area.center.y + p.y) + 2;
+            AddDisc(go.transform, "Sheep", 0.52f, p, new Color(0.93f, 0.92f, 0.87f), sheepOrder, key: ArtKeys.Sheep);
+            AddDisc(go.transform, "SheepHead", 0.24f, p + new Vector2(0.24f, 0.14f), new Color(0.30f, 0.28f, 0.30f), sheepOrder + 1, key: ArtKeys.SheepHead);
+        }
+
+        if (map != null) map.pens.Add(area.center);
     }
 
     void CreateShop(string name, Color signColor, Color chimneyColor, bool forge)
@@ -1628,22 +1703,30 @@ public class VillageGenerator : MonoBehaviour
             if ((c - center).magnitude < plazaSize * 0.5f + 1.5f) continue;
             Rect area = new Rect(c.x - w * 0.5f, c.y - h * 0.5f, w, h);
             if (!IsFree(area, 0.9f)) continue;
-            occupied.Add(area);
-
-            GameObject go = new GameObject("Garden");
-            go.transform.SetParent(facilitiesRoot, false);
-            go.transform.position = new Vector3(c.x, c.y, 0f);
-
-            // 花坛同样是地面上的平铺物件 → Ground 层，村民站在花坛里也看得见
-            AddSlice(go.transform, "Bed", rectSprite, new Vector2(w, h), Vector2.zero, new Color(0.30f, 0.40f, 0.24f), -840, true, ArtKeys.GardenBed);
-            AddRect(go.transform, "EdgeN", new Vector2(w, 0.14f), new Vector2(0f, h * 0.5f), new Color(0.62f, 0.58f, 0.50f), -835, true, ArtKeys.GardenEdge);
-            AddRect(go.transform, "EdgeS", new Vector2(w, 0.14f), new Vector2(0f, -h * 0.5f), new Color(0.62f, 0.58f, 0.50f), -835, true, ArtKeys.GardenEdge);
-            for (int i = 0; i < 7; i++)
-                AddDisc(go.transform, "Flower", Rand(0.18f, 0.26f), new Vector2(Rand(-w * 0.36f, w * 0.36f), Rand(-h * 0.34f, h * 0.34f)), Pick(FlowerColors), -830, true, ArtKeys.GardenFlower);
-
-            if (map != null) map.gardens.Add(c);
+            CreateGarden(area);
             return;
         }
+    }
+
+    /// <summary>按**给定地块**画一个花坛（城里独门独户的那块「院子」用它）。</summary>
+    void CreateGarden(Rect area)
+    {
+        occupied.Add(area);
+
+        float w = area.width;
+        float h = area.height;
+        GameObject go = new GameObject("Garden");
+        go.transform.SetParent(facilitiesRoot, false);
+        go.transform.position = new Vector3(area.center.x, area.center.y, 0f);
+
+        // 花坛同样是地面上的平铺物件 → Ground 层，村民站在花坛里也看得见
+        AddSlice(go.transform, "Bed", rectSprite, new Vector2(w, h), Vector2.zero, new Color(0.30f, 0.40f, 0.24f), -840, true, ArtKeys.GardenBed);
+        AddRect(go.transform, "EdgeN", new Vector2(w, 0.14f), new Vector2(0f, h * 0.5f), new Color(0.62f, 0.58f, 0.50f), -835, true, ArtKeys.GardenEdge);
+        AddRect(go.transform, "EdgeS", new Vector2(w, 0.14f), new Vector2(0f, -h * 0.5f), new Color(0.62f, 0.58f, 0.50f), -835, true, ArtKeys.GardenEdge);
+        for (int i = 0; i < 7; i++)
+            AddDisc(go.transform, "Flower", Rand(0.18f, 0.26f), new Vector2(Rand(-w * 0.36f, w * 0.36f), Rand(-h * 0.34f, h * 0.34f)), Pick(FlowerColors), -830, true, ArtKeys.GardenFlower);
+
+        if (map != null) map.gardens.Add(area.center);
     }
 
     /// <summary>公告板：广场边上的留言板。</summary>
@@ -1754,35 +1837,453 @@ public class VillageGenerator : MonoBehaviour
 
     // ---------------- 房屋 ----------------
 
+    /// <summary>本区块最终盖了几栋房子（人口按它算：房子越密、人越多）。</summary>
+    int housesThisChunk;
+
+    /// <summary>本区块盖了几栋房子（村民数量按房屋密度算，见 <see cref="BuildVillagers"/>）。</summary>
+    public int HousesInChunk { get { return housesThisChunk; } }
+    /// <summary>其中「围着集群中心」盖的有几栋（调试 / 验证用）。</summary>
+    public int ClusteredHousesInChunk { get; private set; }
+    /// <summary>其中「单门独户」的有几栋（调试 / 验证用）。</summary>
+    public int IsolatedHousesInChunk { get; private set; }
+    /// <summary>本区块里真的放下去几片「农家院生产设施」（农田 / 畜栏 / 花园，调试 / 验证用）。</summary>
+    public int SteadingsInChunk { get; private set; }
+
+    /// <summary>
+    /// 盖房子（2026-09-26 用户要求重做分布）：
+    /// <list type="bullet">
+    /// <item>**大部分房子成集群**：先抽几个**集群中心**（优先落在「路边」与「水井 / 喷泉边」），
+    ///       房子围着这些中心长 —— 走到村口看到的是一片挤在一起的人家，而不是均匀撒开；</item>
+    /// <item>**小部分房子单门独户**（<see cref="isolatedHouseShare"/>）：落在离路很远的空地上，
+    ///       周围通常再给一片**大片农田**（城市里换成花园）—— 「独户人家 + 田地 + 没有路经过」；</item>
+    /// <item>还是挤不下就把房型降小一号（城市的大公寓常常塞不进碎地块）。</item>
+    /// </list>
+    /// </summary>
     void BuildHouses()
     {
+        SanitizeDistribution();
         int target = RandInt(houseMin, houseMax + 1);
+        housesThisChunk = 0;
+        ClusteredHousesInChunk = 0;
+        IsolatedHousesInChunk = 0;
+        SteadingsInChunk = 0;
+        if (target <= 0) return;
+
+        int isolated = Mathf.Clamp(Mathf.RoundToInt(target * isolatedHouseShare), 0, target);
+        int clustered = target - isolated;
+
+        // **先把「单门独户」放下去**：它们的条件最苛刻（要离路远、还得给得下旁边那片大农田），
+        // 先占住那块安静的空地，剩下的地方再长集群。反过来的话集群会把整块地占满，
+        // 独户人家就永远挤不进来 —— 2026-09-26 实测：先放集群时「独户 0 栋」（600 次尝试全被「没空地」挡掉）。
+        for (int i = 0; i < isolated; i++) BuildIsolatedHouse();
+        if (clustered > 0) BuildHouseClusters(clustered);
+    }
+
+    /// <summary>
+    /// 兜底：这些分布参数一旦是 0（集群会缩成一个点、农家院那块地会变成零面积）就写回代码里的默认值。
+    /// 2026-09-26 实测：**新加的字段在场景里那个实例上拿到的是代码默认值**（不是 0），所以平时不会触发；
+    /// 留着是防「场景 / 预制体里被存成 0」这种情况（红线 45 讲的是「改了**已有**字段的默认值」时场景里还是旧值）。
+    /// </summary>
+    void SanitizeDistribution()
+    {
+        if (clusterRadius < 1f) clusterRadius = 7f;
+        if (roadClusterShare <= 0f) roadClusterShare = 0.6f;
+        if (roadSideOffset <= 0f) roadSideOffset = 1.6f;
+        if (isolatedRoadClearance <= 0f) isolatedRoadClearance = 6f;
+        if (isolatedSpacing < 0.5f) isolatedSpacing = 1.5f;
+        if (houseSpacing <= 0f) houseSpacing = 1f;
+        if (steadingFarmWidth.x < 1f) steadingFarmWidth = new Vector2(6.5f, 9.5f);
+        if (steadingFarmHeight.x < 1f) steadingFarmHeight = new Vector2(4.4f, 6.0f);
+        if (clusterMin < 1) clusterMin = 2;
+        if (clusterMax < clusterMin) clusterMax = clusterMin;
+    }
+
+    /// <summary>围着「集群中心」盖 <paramref name="count"/> 栋房子。</summary>
+    void BuildHouseClusters(int count)
+    {
+        List<Vector2> clusters = PickClusterCenters();
+        if (clusters.Count == 0) clusters.Add(center);
+
         int placed = 0;
         int attempts = 0;
         int sinceLastPlaced = 0;
-        while (placed < target && attempts < Mathf.Max(60, target * 60))
+        while (placed < count && attempts < Mathf.Max(80, count * 80))
         {
             attempts++;
             sinceLastPlaced++;
+
+            // 轮流围着每一个集群中心长（同一个中心附近的房子看起来就是一伙的）
+            Vector2 cluster = clusters[placed % clusters.Count];
             HouseType type = PickHouseType();
-            // 这块地已经挤不下了：连着失败 60 次就改盖「小一号」的房子。
-            // 不这么做的话，城市会因为在路口与广场挤出的碎地块里塞不进大公寓，只盖出稀稀拉拉几栋。
-            if (sinceLastPlaced > 60) type = SmallerHouse(type);
+            if (sinceLastPlaced > 40) type = SmallerHouse(type);   // 这块地挤不下了
             Vector2 size = HouseSize(type);
-            float w = size.x;
-            float h = size.y;
-            Vector2 c = center + new Vector2(Rand(-radius + w * 0.5f + 0.6f, radius - w * 0.5f - 0.6f), Rand(-radius + h * 0.5f + 0.6f, radius - h * 0.5f - 0.6f));
-            Rect area = new Rect(c.x - w * 0.5f, c.y - h * 0.5f, w, h);
-            if (!IsFree(area, 1.0f)) continue;
+
+            // 连着失败就把落点范围往外扩一点，别让集群彻底长不出来 —— 但**最多扩到 clusterRadius + 4**
+            //（再往外就撒成一片了，既不像「集群」，也会把边角上留给独门独户的那点空地占掉）
+            float spread = Mathf.Min(clusterRadius + sinceLastPlaced * 0.06f, clusterRadius + 4f);
+            Rect area;
+            if (!TryFindAreaAround(cluster, 1.1f, spread, size, houseSpacing, out area, 50))
+            {
+                // 集群中心周围真没地方了：退回区块里随便找块空地（别浪费这个名额）
+                if (!TryFindFreeArea(size, houseSpacing, out area, 60)) continue;
+            }
 
             occupied.Add(area);
-            // 美术交了「杂项建筑」（house_extra：中世纪建筑包那类拆不出墙 / 门 / 窗的整图）时，
-            // 这一栋就改用整图盖 —— 同一片村庄里于是会混进几栋画风不一样的房子。
-            if (!BuildExtraHouse(area)) CreateHouse(area, housesRoot, type);
-            if (map != null) map.houses.Add(new Vector2(area.center.x, area.yMin - 0.9f));   // 门口
+            PlaceHouse(area, type);
+            ClusteredHousesInChunk++;
             placed++;
             sinceLastPlaced = 0;
         }
+    }
+
+    /// <summary>
+    /// 抽几个集群中心：**路边与水井（喷泉）边更容易出现** —— 先按 <see cref="roadClusterShare"/> 掷一次决定
+    /// 这次落在路边还是井边，两种都抽不到时才在区块里随便找块空地（没路的荒野也能有集群）。
+    /// 两个中心之间至少隔一个 <see cref="clusterRadius"/>，不然实际上只有一个群。
+    /// </summary>
+    List<Vector2> PickClusterCenters()
+    {
+        int count = Mathf.Clamp(RandInt(clusterMin, clusterMax + 1), 1, 6);
+        List<Vector2> clusters = new List<Vector2>();
+        int guard = 0;
+        while (clusters.Count < count && guard++ < count * 8)
+        {
+            Vector2 spot;
+            bool found = Chance(roadClusterShare) ? TryPickRoadSidePoint(out spot) : TryPickWellSidePoint(out spot);
+            if (!found) found = TryPickRoadSidePoint(out spot) || TryPickWellSidePoint(out spot);
+            if (!found) found = TryFindFreePoint(3.0f, 0.6f, out spot, 40);
+            if (!found) continue;
+
+            bool tooClose = false;
+            for (int i = 0; i < clusters.Count; i++)
+                if ((clusters[i] - spot).sqrMagnitude < clusterRadius * clusterRadius) tooClose = true;
+            if (tooClose) continue;
+
+            clusters.Add(spot);
+        }
+        return clusters;
+    }
+
+    /// <summary>在已经铺好的路面旁边抽一个点（集群中心落在路边）。</summary>
+    bool TryPickRoadSidePoint(out Vector2 point)
+    {
+        point = center;
+        if (roadRects.Count == 0) return false;
+
+        float offset = roadWidth * 0.5f + roadSideOffset;
+        for (int i = 0; i < 24; i++)
+        {
+            Rect road = roadRects[RandInt(0, roadRects.Count)];
+            bool horizontal = road.width >= road.height;
+            float along = Rand(0.15f, 0.85f);
+            float side = Chance(0.5f) ? 1f : -1f;
+            Vector2 spot = horizontal
+                ? new Vector2(Mathf.Lerp(road.xMin, road.xMax, along), road.center.y + side * offset)
+                : new Vector2(road.center.x + side * offset, Mathf.Lerp(road.yMin, road.yMax, along));
+            if (Mathf.Abs(spot.x - center.x) > radius - 3f) continue;
+            if (Mathf.Abs(spot.y - center.y) > radius - 3f) continue;
+            point = spot;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// 在村里那口井（城市是喷泉）旁边抽一个点。
+    /// **必须用区块自己的 `rng` 抽、不能用 `UnityEngine.Random`（`VillageMap.PickNear` 那种）**：
+    /// 区块内容要是「坐标 + 种子」的纯函数（红线 29），走远再回头房子才不会挪位置。
+    /// `VillageMap` 是全局表，所以先按距离筛：井一定落在自己那块地的中心附近（≤ 9 米），
+    /// 隔壁区块的井离本块中心 ≥ 23 米，用 <see cref="radius"/>(16) 就能干净地筛出自己那口。
+    /// </summary>
+    bool TryPickWellSidePoint(out Vector2 point)
+    {
+        point = center;
+        Vector2 well = center;
+        bool found = PickOwnVillageAnchor(map != null ? map.wells : null, out well);
+        if (!found && map != null) found = PickOwnVillageAnchor(map.AnchorList("fountain"), out well);
+        if (!found) return false;
+
+        // 围着井，但要留出井自己的碰撞半径（井是个 r≈1.5 的圆）
+        float angle = Rand(0f, Mathf.PI * 2f);
+        Vector2 spot = well + new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * Rand(3.4f, 5.4f);
+        if (Mathf.Abs(spot.x - center.x) > radius - 3f) return false;
+        if (Mathf.Abs(spot.y - center.y) > radius - 3f) return false;
+        point = spot;
+        return true;
+    }
+
+    /// <summary>从锚点表里挑出**属于本区块**的那一个（用区块 rng 抽，蓄水池抽样；找不到返回 false）。</summary>
+    bool PickOwnVillageAnchor(List<Vector2> list, out Vector2 anchor)
+    {
+        anchor = center;
+        if (list == null || list.Count == 0) return false;
+
+        int picked = -1;
+        int count = 0;
+        for (int i = 0; i < list.Count; i++)
+        {
+            if ((list[i] - center).sqrMagnitude > radius * radius) continue;
+            count++;
+            if (rng.Next(count) == 0) picked = i;
+        }
+        if (picked < 0) return false;
+        anchor = list[picked];
+        return true;
+    }
+
+    /// <summary>
+    /// 单门独户的一栋房子：落在离路（**含隔壁区块伸过来的那段路**）至少 <see cref="isolatedRoadClearance"/> 的空地上，
+    /// 而且**边上要放得下那片大农田**（整个「房子 + 田」一起成立才算数），
+    /// 在所有合格的落点里挑**离别的建筑最远**的那一个（<see cref="NearestBuildingDistance"/>）——
+    /// 这样它看起来才真的是「一个人家」，而不是又一户挤不进集群的邻居。
+    /// </summary>
+    void BuildIsolatedHouse()
+    {
+        HouseType type = PickHouseType();
+        bool garden = settlement == SettlementKind.City;
+        bool withField = Chance(steadingChance);      // 大多数独户人家门口都有一片地（「等一等」的生产设施）
+
+        // 房型太大放不下时降一号再试（同集群那边的做法）
+        for (int round = 0; round < 2; round++)
+        {
+            Vector2 size = HouseSize(type);
+            Vector2 plotSize = SteadingSize(garden);
+
+            Vector2 bestSpot = Vector2.zero;
+            Rect bestArea = default(Rect);
+            float bestScore = -1f;
+
+            for (int attempt = 0; attempt < 120; attempt++)
+            {
+                Vector2 spot = center + new Vector2(
+                    Rand(-radius + size.x * 0.5f + 0.8f, radius - size.x * 0.5f - 0.8f),
+                    Rand(-radius + size.y * 0.5f + 0.8f, radius - size.y * 0.5f - 0.8f));
+                if (RoadDistance(spot) < isolatedRoadClearance) continue;     // 独户人家「一般没有道路经过」
+
+                Rect area = new Rect(spot.x - size.x * 0.5f, spot.y - size.y * 0.5f, size.x, size.y);
+                if (!IsFree(area, isolatedSpacing)) continue;
+                // 要带田的话，边上**必须**放得下那片大农田 —— 放不下就换个地方（「房子 + 大片田」是一整套）
+                if (withField && !CanHostSteading(area, plotSize)) continue;
+
+                float score = NearestBuildingDistance(spot);
+                if (score <= bestScore) continue;
+                bestScore = score;
+                bestSpot = spot;
+                bestArea = area;
+            }
+
+            if (bestScore < 0f) { type = SmallerHouse(type); continue; }   // 这块地挤不出单门独户，换小一号再试
+
+            occupied.Add(bestArea);
+            PlaceHouse(bestArea, type);
+            IsolatedHousesInChunk++;
+            // 名字标出来：层级里一眼能看出哪几栋是「单门独户」（调试 / 验证也按它认）
+            if (housesRoot != null && housesRoot.childCount > 0)
+                housesRoot.GetChild(housesRoot.childCount - 1).name = "House_Lone";
+
+            // 「房子 + 门口那片田」算这户人家的一个院子，院子外再留一圈空地：
+            // 后面长出来的集群房子**不许贴上来**，否则「单门独户」立刻就变成又一家邻居了
+            Rect yard = bestArea;
+            if (withField)
+            {
+                Rect plot = BuildSteading(bestArea, plotSize, garden);
+                if (plot.width > 0.1f) { yard = Union(yard, plot); SteadingsInChunk++; }
+            }
+            occupied.Add(new Rect(yard.xMin - loneYard, yard.yMin - loneYard, yard.width + loneYard * 2f, yard.height + loneYard * 2f));
+            return;
+        }
+    }
+
+    /// <summary>独户人家院子外面还要留多宽的空地（世界单位）。</summary>
+    const float loneYard = 2.5f;
+
+    static Rect Union(Rect a, Rect b)
+    {
+        float xMin = Mathf.Min(a.xMin, b.xMin);
+        float yMin = Mathf.Min(a.yMin, b.yMin);
+        float xMax = Mathf.Max(a.xMax, b.xMax);
+        float yMax = Mathf.Max(a.yMax, b.yMax);
+        return new Rect(xMin, yMin, xMax - xMin, yMax - yMin);
+    }
+
+    /// <summary>这个点离最近的已有建筑有多远（挑「最孤单」的落点用）。</summary>
+    float NearestBuildingDistance(Vector2 spot)
+    {
+        float best = float.MaxValue;
+        for (int i = 0; i < occupied.Count; i++)
+            best = Mathf.Min(best, RectDistance(occupied[i], spot));
+        return best == float.MaxValue ? 999f : best;
+    }
+
+    /// <summary>把一栋房子真的放下去（走「美术整图」还是分件都一样），并记账。</summary>
+    void PlaceHouse(Rect area, HouseType type)
+    {
+        // 美术交了「杂项建筑」（house_extra：中世纪建筑包那类拆不出墙 / 门 / 窗的整图）时，
+        // 这一栋就改用整图盖 —— 同一片村庄里于是会混进几栋画风不一样的房子。
+        if (!BuildExtraHouse(area)) CreateHouse(area, housesRoot, type);
+        if (map != null) map.houses.Add(new Vector2(area.center.x, area.yMin - 0.9f));   // 门口
+        housesThisChunk++;
+    }
+
+    /// <summary>
+    /// 独户人家门口那片「生产设施」：农村 / 野外是一片大农田（或畜栏），城市里换成花园。
+    /// 返回**真的铺出去的那块地**（<c>width</c> 为 0 = 四条边都放不下，没铺成）。
+    /// </summary>
+    Rect BuildSteading(Rect house, Vector2 plotSize, bool garden)
+    {
+        int firstSide = RandInt(0, 4);
+        for (int i = 0; i < 4; i++)
+        {
+            Rect plot = SteadingPlot(house, plotSize, (firstSide + i) % 4);
+            if (!InsideChunk(plot, 0.8f)) continue;
+            if (!IsFree(plot, 1f)) continue;
+
+            if (garden) CreateGarden(plot);
+            else if (Chance(0.75f)) CreateFarm(plot);
+            else CreatePen(plot);
+            return plot;
+        }
+        return new Rect();
+    }
+
+    /// <summary>独户农家院那片地有多大（城市里换成花园，小一圈）。</summary>
+    Vector2 SteadingSize(bool garden)
+    {
+        return garden
+            ? new Vector2(Rand(3.0f, 4.0f), Rand(2.6f, 3.4f))
+            : new Vector2(Rand(steadingFarmWidth.x, steadingFarmWidth.y),
+                          Rand(steadingFarmHeight.x, steadingFarmHeight.y));
+    }
+
+    /// <summary>房子四条边里有没有一边放得下那片地（放不下就说明这户人家不该落在这儿）。</summary>
+    bool CanHostSteading(Rect house, Vector2 plotSize)
+    {
+        for (int side = 0; side < 4; side++)
+        {
+            Rect plot = SteadingPlot(house, plotSize, side);
+            if (!InsideChunk(plot, 0.8f)) continue;
+            if (!IsFree(plot, 1f)) continue;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>农家院那片地放在房子的哪一边（0 南 / 1 北 / 2 东 / 3 西）。</summary>
+    static Rect SteadingPlot(Rect house, Vector2 size, int side)
+    {
+        // **gap 必须大于那片地自己的 clearance（1.0）**：房子一旦落下去就进了 occupied，
+        // 而 IsFree 会把候选地块往外撑 clearance —— gap 太小时它每次都撑回房子里，四边全判「放不下」
+        //（2026-09-26 实测：gap 0.7 时 16 栋独户人家一栋都没铺成田）。
+        const float gap = 1.5f;
+        switch (side)
+        {
+            case 1: return new Rect(house.center.x - size.x * 0.5f, house.yMax + gap, size.x, size.y);
+            case 2: return new Rect(house.xMax + gap, house.center.y - size.y * 0.5f, size.x, size.y);
+            case 3: return new Rect(house.xMin - gap - size.x, house.center.y - size.y * 0.5f, size.x, size.y);
+            default: return new Rect(house.center.x - size.x * 0.5f, house.yMin - gap - size.y, size.x, size.y);
+        }
+    }
+
+    /// <summary>这块地是不是整个儿都在本区块里（留出一点边距）。</summary>
+    bool InsideChunk(Rect area, float margin)
+    {
+        return area.xMin >= center.x - radius + margin && area.xMax <= center.x + radius - margin
+            && area.yMin >= center.y - radius + margin && area.yMax <= center.y + radius - margin;
+    }
+
+    /// <summary>在 origin 附近（min ~ max 距离）找一块放得下 <paramref name="size"/> 的空地。</summary>
+    bool TryFindAreaAround(Vector2 origin, float minDistance, float maxDistance, Vector2 size, float padding, out Rect area, int attempts = 60)
+    {
+        for (int i = 0; i < attempts; i++)
+        {
+            float angle = Rand(0f, Mathf.PI * 2f);
+            float distance = Rand(minDistance, Mathf.Max(minDistance + 0.1f, maxDistance));
+            Vector2 c = origin + new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * distance;
+            Rect candidate = new Rect(c.x - size.x * 0.5f, c.y - size.y * 0.5f, size.x, size.y);
+            if (!InsideChunk(candidate, 0.8f)) continue;
+            if (!IsFree(candidate, padding)) continue;
+            area = candidate;
+            return true;
+        }
+        area = new Rect(origin.x - size.x * 0.5f, origin.y - size.y * 0.5f, size.x, size.y);
+        return false;
+    }
+
+    /// <summary>在本区块里随便找一块放得下 <paramref name="size"/> 的空地。</summary>
+    bool TryFindFreeArea(Vector2 size, float padding, out Rect area, int attempts = 80)
+    {
+        for (int i = 0; i < attempts; i++)
+        {
+            Vector2 c = center + new Vector2(Rand(-radius + size.x * 0.5f + 0.6f, radius - size.x * 0.5f - 0.6f),
+                                             Rand(-radius + size.y * 0.5f + 0.6f, radius - size.y * 0.5f - 0.6f));
+            Rect candidate = new Rect(c.x - size.x * 0.5f, c.y - size.y * 0.5f, size.x, size.y);
+            if (!IsFree(candidate, padding)) continue;
+            area = candidate;
+            return true;
+        }
+        area = new Rect(center.x - size.x * 0.5f, center.y - size.y * 0.5f, size.x, size.y);
+        return false;
+    }
+
+    static readonly int[] ArmDirs = { ArmUp, ArmRight, ArmDown, ArmLeft };
+
+    static Vector2Int StepOf(int dir)
+    {
+        switch (dir)
+        {
+            case ArmUp: return new Vector2Int(0, 1);
+            case ArmDown: return new Vector2Int(0, -1);
+            case ArmLeft: return new Vector2Int(-1, 0);
+            default: return new Vector2Int(1, 0);
+        }
+    }
+
+    static Vector2 DirectionOf(int dir)
+    {
+        Vector2Int step = StepOf(dir);
+        return new Vector2(step.x, step.y);
+    }
+
+    /// <summary>
+    /// 这个点离「最近的路」有多远：算上本区块铺过的路面，**也算上隔壁区块伸过来的那一段** ——
+    /// 两个区块的路是连着的，只看自己这一块会让「独门独户的农舍」正好贴到隔壁那条路上。
+    /// 区块里根本没路时返回很大（独户人家哪儿都能落）。
+    /// </summary>
+    float RoadDistance(Vector2 point)
+    {
+        const float probe = 10f;      // 隔壁那条路往那边算多远（够覆盖一个区块的臂了）
+
+        float best = float.MaxValue;
+        for (int i = 0; i < roadRects.Count; i++)
+            best = Mathf.Min(best, RectDistance(roadRects[i], point));
+
+        for (int d = 0; d < ArmDirs.Length; d++)
+        {
+            int dir = ArmDirs[d];
+            if ((ArmsAt(chunkCoord + StepOf(dir)) & OppositeArm(dir)) == 0) continue;
+            // 对面有能接上的路 → 它一定会铺到边界，再从边界中点往那边延伸
+            Vector2 border = center + DirectionOf(dir) * radius;
+            best = Mathf.Min(best, SegmentDistance(point, border, border + DirectionOf(dir) * probe));
+        }
+        return best;
+    }
+
+    /// <summary>点到矩形的最短距离（点在矩形里就是 0）。</summary>
+    static float RectDistance(Rect rect, Vector2 point)
+    {
+        float dx = Mathf.Max(0f, Mathf.Max(rect.xMin - point.x, point.x - rect.xMax));
+        float dy = Mathf.Max(0f, Mathf.Max(rect.yMin - point.y, point.y - rect.yMax));
+        return Mathf.Sqrt(dx * dx + dy * dy);
+    }
+
+    /// <summary>点到线段的最短距离。</summary>
+    static float SegmentDistance(Vector2 point, Vector2 a, Vector2 b)
+    {
+        Vector2 ab = b - a;
+        float lengthSqr = ab.sqrMagnitude;
+        if (lengthSqr < 0.0001f) return Vector2.Distance(point, a);
+        float t = Mathf.Clamp01(Vector2.Dot(point - a, ab) / lengthSqr);
+        return Vector2.Distance(point, a + ab * t);
     }
 
     /// <summary>
@@ -1800,10 +2301,9 @@ public class VillageGenerator : MonoBehaviour
         go.transform.position = new Vector3(area.center.x, area.center.y, 0f);
 
         Sprite image = ArtOverride.PickVariant(ArtKeys.HouseExtra, null, (float)rng.NextDouble());
-        AddWholeBuilding(go.transform, ArtKeys.HouseExtra, image, area, YOrder(area.center.y), "ExtraBuilding");
-
-        BoxCollider2D collider = go.AddComponent<BoxCollider2D>();
-        collider.size = new Vector2(area.width, area.height);
+        Rect drawn;
+        AddWholeBuilding(go.transform, ArtKeys.HouseExtra, image, area, YOrder(area.center.y), "ExtraBuilding", out drawn);
+        AddBuildingFootprint(go, drawn);
         return true;
     }
 
@@ -1902,10 +2402,10 @@ public class VillageGenerator : MonoBehaviour
 
         // 整栋建筑一图替换：这个房型放了整栋图 → 直接画一整栋就收工。
         // 墙 / 门 / 窗 / 烟囱都不再生成（图里都画好了），代价是窗子不会在夜里发亮（一张图亮不起来）。
-        if (AddWholeBuilding(go.transform, HouseWholeKey(type), area, order))
+        Rect drawn;
+        if (AddWholeBuilding(go.transform, HouseWholeKey(type), area, order, out drawn))
         {
-            BoxCollider2D wholeCollider = go.AddComponent<BoxCollider2D>();
-            wholeCollider.size = new Vector2(area.width, area.height);
+            AddBuildingFootprint(go, drawn);
             return go;
         }
 
@@ -2048,8 +2548,8 @@ public class VillageGenerator : MonoBehaviour
             AddRect(go.transform, "Chimney", new Vector2(0.34f, 0.62f), new Vector2(area.width * 0.28f, area.height * 0.5f + 0.12f),
                 new Color(0.45f, 0.36f, 0.30f), order + 1, key: ArtKeys.HouseChimney);
 
-        BoxCollider2D collider = go.AddComponent<BoxCollider2D>();
-        collider.size = new Vector2(area.width, area.height);
+        // 分件房子：屋顶画满整块占地，所以「图案」就是这块地
+        AddBuildingFootprint(go, new Rect(-area.width * 0.5f, -area.height * 0.5f, area.width, area.height));
 
         return go;
     }
@@ -2453,9 +2953,25 @@ public class VillageGenerator : MonoBehaviour
 
     // ---------------- 村民 ----------------
 
+    /// <summary>这次生成给这个区块定下的村民数量（运行时「按房屋密度补人」按它算，见 <see cref="VillageWorld"/>）。</summary>
+    public int LastVillagerTarget { get; private set; }
+
+    /// <summary>
+    /// 按**房屋密度**决定这个区块住几个人（2026-09-26 用户要求：房子密的地方人多、独门独户只有一两口人）：
+    /// 数量 = 本区块房子数 × 每栋房的入住率（<see cref="WorldBiome.VillagersPerHouse"/>）× 一点随机，
+    /// 最后夹在聚落给出的上下限里。
+    ///
+    /// **「屏幕里必须站着几个村民」那条规则已经去掉了**：人是跟着房子长出来的，
+    /// 房子少的地方就是人少；缺的人口由 <see cref="VillageWorld"/> 在**玩家看不见的地方**补
+    /// （见 <see cref="VillageWorld.IsHiddenFromPlayer"/>）。
+    /// </summary>
     void BuildVillagers()
     {
-        int target = RandInt(villagerMin, villagerMax + 1);
+        float rate = WorldBiome.VillagersPerHouse(settlement);
+        int target = Mathf.RoundToInt(housesThisChunk * rate * Rand(0.75f, 1.25f));
+        target = Mathf.Clamp(target, villagerMin, Mathf.Max(villagerMin, villagerMax));
+        LastVillagerTarget = target;
+
         int spawned = 0;
         int attempts = 0;
         while (spawned < target && attempts < Mathf.Max(40, target * 40))
@@ -2576,21 +3092,20 @@ public class VillageGenerator : MonoBehaviour
     }
 
     /// <summary>
-    /// 在某个点附近补一个村民（「保证视野里不少于 N 个村民」用）。
+    /// 在**指定位置**造一个村民（运行时按房屋密度补人用）：位置由 <see cref="VillageWorld"/> 挑，
+    /// 保证落在**玩家看不见**的地方（屏幕外，或者从小虫那边望过去被房子 / 树挡着）。
     /// 会挂到指定父物体（当前区块的 Villagers）下面，区块回收时跟着销毁。
     /// </summary>
-    public Villager SpawnWalkerNear(Vector2 near, Transform parent, int index)
+    public Villager SpawnWalkerAt(Vector2 position, Transform parent, int index)
     {
         VillagerJob job = VillagerJobs.All[RandInt(0, VillagerJobs.All.Length)];
+        Vector2 workplace = WorkplaceFor(job);
 
-        Vector2 point;
-        if (!TryFindPointAround(near, 3f, 8f, 0.5f, out point, 40)) point = near;
-
-        Villager villager = CreateVillager(point, index, job, point, parent);
+        Villager villager = CreateVillager(position, index, job, workplace, parent);
         if (villager != null)
         {
-            villager.hangout = near;
-            villager.home = point;
+            villager.hangout = position;
+            villager.home = NearestHouse(position);
         }
         return villager;
     }

@@ -34,7 +34,7 @@ public class ChaosMeter : MonoBehaviour
     [Header("阶段事件")]
     [Tooltip("L2「围观」的噪音半径")]
     public float curiousNoiseRadius = 6f;
-    [Tooltip("L4：可见范围内至少要有几个村民（每升一级 +1）")]
+    [Tooltip("L4：给「这个区块该住几个人」的临时加成（人越聚越多）")]
     public int extraVillagersAtLevel4 = 1;
     [Tooltip("L5：全场灯闪多久")]
     public float finalFlickerSeconds = 6f;
@@ -216,13 +216,14 @@ public class ChaosMeter : MonoBehaviour
                 break;
 
             case 4:
-                // 场景失控：人越聚越多（每个区块要几个人由聚落决定，这里只加一个「临时加成」）
+                // 场景失控：人越聚越多（每个区块住几个人由房屋密度决定，这里只加一个「临时加成」；
+                // 这些人照样只在**玩家看不见的地方**冒出来，见 VillageWorld.MaintainPopulation）
                 if (world == null) world = FindObjectOfType<VillageWorld>();
                 if (world != null)
                 {
-                    world.extraMinVillagers += extraVillagersAtLevel4;
-                    Debug.Log("[Chaos] 混乱 4 级（场景失控）：来看热闹的人变多了（下限 +"
-                        + world.extraMinVillagers + "）。");
+                    world.extraPopulation += extraVillagersAtLevel4;
+                    Debug.Log("[Chaos] 混乱 4 级（场景失控）：村里的人变多了（人口 +"
+                        + world.extraPopulation + "）。");
                 }
                 break;
 

@@ -72,7 +72,7 @@
 | | `BugEat` | 空格进食，头部为中心整圈判定，按 `Edible.requiredLevel` 过滤，吃到村民通知目击者 |
 | | `BugVitality` / `BugGrowth` / `HiddenValue` | 体力（饿死回菜单）/ 成长 3 级 / 不显示给玩家的数值 |
 | | `DragController` + `Draggable` | `F` 拾取放下，物品停在头前方 |
-| 世界 | `VillageWorld` | **区块流式调度**：加载/回收、冻结远处村民、地道配对；村民可见性 / 冻结距离按当前区块的聚落取值 |
+| 世界 | `VillageWorld` | **区块流式调度**：加载/回收、冻结远处村民、地道配对、**按房屋密度维持人口（只在玩家看不见的地方补人，见 §4.16）**；冻结距离按当前区块的聚落取值 |
 | | `WorldBiome` | **世界地貌与聚落体系**（§4.12）：草原/森林/沙漠 × 荒野/农村/城市、低频噪声分布、密度、生成参数、地面与路面 key —— **生成参数的唯一权威** |
 | | `VillageGenerator` | `BuildChunk(coord, seed)` 确定性生成一个区块的全部内容；食物 / 可交互物品来自 `FoodCatalog` / `ItemCatalog` / `ContentPack`（见 4.5 / 4.12） |
 | | `VillageMap` | 设施锚点表（农田/摊位/长椅/房屋/巡逻点/按种类登记的 `anchors`…），支持按距离剪枝 |
@@ -102,8 +102,14 @@
   两者都由「坐标 + 种子」的低频噪声决定 —— 见 §4.12。**没有「开局选地图」了**。
 - 「有没有路 / 有没有广场 / 有没有井」都是按几率来的，不再是每个区块都有十字路与中央水井。
 - 村民离玩家超过 `WorldBiome.FreezeRadius(聚落)`（城市 22、其余 26）被冻结（停状态机 + 停物理 + 关渲染 + 移出 `Villager.All`），
-  走回来自动解冻；`VillageWorld` 每 0.5s 检查可见框内村民数，不足 `WorldBiome.MinVillagersInView(聚落)` 就近补人
-  （**荒野不补人**：人少才像荒野）。
+  走回来自动解冻。
+- **人口跟着房子走，而且只在玩家看不见的地方补人（2026-09-26 定，见 §4.16）**：
+  每个区块住几个人在**生成时**就按**房屋密度**算好了（本区块房子数 × `WorldBiome.VillagersPerHouse(聚落)`，
+  再乘一点随机、夹在 `villagerMin/Max` 里），存进 `VillageWorld.chunkPopulation`；
+  `VillageWorld.MaintainPopulation()`（每 `populationInterval` 秒）只负责把被吃掉 / 走丢的人补回来，
+  **补的落点必须是「玩家看不见」的**（相机视野之外，或虽在屏幕里但从小虫望过去被静态物体挡着）。
+  **旧的「屏幕里至少要有 N 个村民」（`MinVillagersInView` / `EnsureVillagersInView`）已删除** ——
+  不许再让村民当着玩家的面凭空出现。
 - **`chunkSize` 在 `VillageWorld` 与 `VillageGenerator` 上都存在，必须一致**（`VillageWorld.Awake` 会自动对齐到 generator 的值）。
 
 ### 4.3 渲染与排序（2D 俯视的核心）
@@ -113,6 +119,11 @@
 - 「一整块铺在地上」的东西（农田/花坛/牧场草地/地洞洞口）**属于 Ground 层，按固定次序排**；
   只有 `YSort` 对象（小虫/村民/木箱）用**世界 Y** 排序。
 - 角色、房屋、树、羊都在 Default 层，所以永远踩在这些地面贴图之上。
+- **`YSort` 的偏移语义（2026-09-26 定，见红线 52）**：`YSort` 把每个子渲染器**初始的 `sortingOrder`
+  当作「相对根节点的偏移」**缓存下来（`scale` 是**每世界单位 10 档**）。所以挂 YSort 的物体，
+  子渲染器只该写**很小的偏移**（小虫：尾巴 `+1`、头 `+2`）；写成几十就等于「硬往前挤几米」，
+  房子 / 树再也挡不住它。`YSort` 缓存的类型是 `Renderer`（**不只是 `SpriteRenderer`**）——
+  小虫的尾巴是 `LineRenderer`，漏掉它尾巴就会永远停在写死的那个绝对序号上（一直画在世界后面）。
 
 ### 4.4 数据与存档
 
@@ -270,7 +281,7 @@
 **上下游接线**（改这些地方要一起看）：
 - `Villager.EffectiveViewRadius` / `HearingRadius` 会乘上 `Alertness` 与 `ChaosMeter` 的加成 —— **只能在这两处读**，
   别在别处再乘一遍；
-- 混乱升级的阶段事件在 `ChaosMeter.OnLevelUp`：L1 灯闪 / L2 围观噪音 / L3 视野听觉 / L4 `minVillagersInView +1` / L5 全场警报；
+- 混乱升级的阶段事件在 `ChaosMeter.OnLevelUp`：L1 灯闪 / L2 围观噪音 / L3 视野听觉 / L4 `VillageWorld.extraPopulation +1`（村里的人变多，**这些人照样只在玩家看不见的地方冒出来**，见 §4.16）/ L5 全场警报；
 - **一次事故只算一次混乱**：电线剪断时统一广播一次 `PowerChanged(false)`，
   它身上的机器走 `SetPower(false, announce: false)` 静默断电（否则一次停电算两次，见 `Power.cs`）；
 - 为了让「啃断一根孤零零的电线」也有反馈，`ElectricWire.CutPower()` **不管射程内有没有机器都会广播断电事件**。
@@ -323,7 +334,8 @@
 **全局密度系数**：`WorldBiome.Density`（当前 **1.8**，2026-09-25 从 `MapProfiles` 搬家过来）。
 `WorldBiome.ApplyDensity` 在套完聚落 / 自然参数之后统一乘它，作用对象是
 **房子 / 树 / 灌木 / 仙人掌 / 枯树 / 食物位 / 物品位 / 各类设施几率**；
-**村民数量（`villagerMin/Max`）故意不乘** —— 人口直接影响性能与手感，要单独调。
+**村民数量（`villagerMin/Max`）本身不乘** —— 但 2026-09-26 起人口是「**房子数 × 入住率**」
+（见 §4.16），房子变密人口自然跟着变多，要调人口改 `WorldBiome.VillagersPerHouse`。
 另外村庄 / 城市会保证 `itemSlotsMin >= 1`（每区块至少有一个能搬能玩的东西）。
 
 **「有图优先」规则**：内容目录里的每一条定义**都必须有 `artKey`**（不然美术没法单独换它，红线 15）；
@@ -438,7 +450,7 @@
 ```
 ApplySettlement(...)   // 聚落决定基数（绝对值）：房子 / 人口 / 设施 / 广场 / 路宽 / 地洞
 ApplyNature(...)       // 自然体系在基数上乘系数：树 ×1.7（森林）/ ×0.12（沙漠）、仙人掌、灌木、食物位、农事几率
-ApplyDensity(...)      // 最后统一乘 Density(1.8)；村民数量不乘
+ApplyDensity(...)      // 最后统一乘 Density(1.8)；村民数量本身不乘（但人口 = 房子数 × 入住率，见 §4.16）
 ```
 
 所以 `VillageGenerator` 上那些 `houseMin / treeMin / foodSlots…` 字段**只是 Inspector 的默认值**，
@@ -656,6 +668,65 @@ ArmsAt(coord) → ArmMask(shape, turn)        // 这个区块路在哪几边（�
 
 ---
 
+## 4.16 房屋分布、建筑碰撞体与人口（2026-09-26 用户的两次要求）
+
+### 1. 建筑碰撞体 = 「脚印」，不是整块占地
+
+用户原话：「**去除建筑物周边的透明碰撞箱**……把碰撞箱的体积缩小成长为建筑图案的宽，高为长的三分之二
+（即小虫可以躲在房子的后面，从主视角看来被遮挡）」。
+
+落地：`VillageGenerator.AddBuildingFootprint(go, drawn)` ——
+**宽 = 建筑图案的宽、高 = min(图案的高, 宽的 2/3)**，**底边压在建筑底边上**
+（`drawn` 是**物体的本地坐标**里那张图实际画到哪儿：整栋图由 `AddWholeBuilding(... out drawn)` 交出来，
+分件房子就是整块占地）。用在：六种房型的 `CreateHouse`、`house_extra` 的 `BuildExtraHouse`、`BuildCastle`、
+`BuildWindmill`、`BuildPowerPlant`、`BuildBellTower`。
+
+- 为什么要缩：整栋建筑图是按原比例 contain 进占地的，**图没填满的那部分以前也压着一块碰撞体** ——
+  那就是「建筑周边一圈看不见的墙」；
+- 缩了之后房子的**上半截（画的是屋顶 / 二楼）可以走进去**：房子的排序取它自己的中心 Y
+  （`YOrder(area.center.y)`），站在房子靠上那一半的小虫 Y 更大、`YSort` 序号更小 → **画在房子底下**，
+  从主视角看就是「躲在房子后面」。实测 8/8 栋：底部墙体仍挡人、屋顶下可站人、房子画在小虫之上。
+
+> ⚠️ **`SteadingPlot` 的 `gap` 必须大于那片地自己的 `IsFree` clearance（1.0）**，现在是 1.5。
+> 房子一旦落进 `occupied`，`IsFree(plot, 1f)` 会把候选地块往外撑 1 米 —— gap 太小时每次都撑回房子里，
+> 四边全判「放不下」（2026-09-26 实测：gap 0.7 时 16 栋独户人家**一栋都没铺成田**，而且很难查）。
+
+### 2. 房屋分布：多数成集群、少数单门独户
+
+用户原话：「房子要按照概率生成：**大部分房子呈现集群的方式聚集，在路边和水井边更容易出现**；
+也有**小部分**的房屋会**单独出现**，此时他们的周围一般有**大片农田**等生产设施，而**一般没有道路**经过」。
+
+`BuildHouses` 拆成两条路（参数都在 `WorldBiome.ApplySettlement` 里按聚落给）：
+
+| | 谁 | 规则 |
+| --- | --- | --- |
+| **集群** `BuildHouseClusters` | 大头（`1 - isolatedHouseShare`） | 先抽 1~4 个**集群中心**（`PickClusterCenters`：`roadClusterShare` 掷一次决定落在**路边**（`TryPickRoadSidePoint`，从路面中线往外挪 `roadSideOffset` + 半个路宽）还是**水井 / 喷泉边**（`TryPickWellSidePoint`）；两个中心至少隔一个 `clusterRadius`），房子围着一个中心长（半径 `clusterRadius`，连着失败最多扩到 `clusterRadius + 4`） |
+| **独户** `BuildIsolatedHouse` | 小头（`isolatedHouseShare`，农村 0.22 / 城市 0.12 / 荒野 1） | 离最近的路至少 `isolatedRoadClearance`（**算上隔壁区块伸过来的那段路**，见 `RoadDistance`）、与别的建筑留 `isolatedSpacing`；**大多数（`steadingChance`）要求边上放得下那片大农田**（`CanHostSteading`，放不下就换落点）；在合格落点里**挑离别的建筑最远的那个**（`NearestBuildingDistance`）；落下去后把那片田也铺上（`BuildSteading`：农村 / 野外是**大农田**或畜栏，城市换成花园），并把「房子 + 田」外扩 `loneYard`(2.5) 登记进 `occupied` —— **后面的集群不许贴上来**，不然「单门独户」立刻变成又一家邻居 |
+
+- **顺序很关键：先放独户、再长集群**。独户的条件最苛刻，先占住那块安静的空地；
+  反过来（2026-09-26 第一版）集群会把整块地占满，**独户一栋都放不下**（实测 600 次尝试全被「没空地」挡掉）；
+- 「孤零零」靠三件事一起成立：**离路远**（实测独户 ≥ 4.4m、集群最小 0.2m）、
+  **邻居远**（实测独户最近邻居均值 8.8m、集群 5.7m）、**门口有田**（实测 13/14 栋在 10m 内有一块 ≥5.5m 宽的农田 / 畜栏）；
+- 独户房子的物体名是 **`House_Lone`**（层级里一眼能看出来，验证脚本也按它认）；
+- 生成器上留了三个只读计数：`HousesInChunk` / `ClusteredHousesInChunk` / `IsolatedHousesInChunk` / `SteadingsInChunk`。
+
+### 3. 人口 = 房屋密度；刷新只在「看不见」的地方
+
+- **数量**：`VillageGenerator.BuildVillagers` 里 `round(本区块房子数 × WorldBiome.VillagersPerHouse(聚落) × 随机 0.75~1.25)`
+  再夹在 `villagerMin/Max` 里（农村 1~8 / 城市 2~10 / 荒野 0~1）。
+  每栋房的入住率：**农村 0.45 / 城市 0.6 / 荒野 0.5**。实测农村区块 9~12 栋房 → 3~6 个村民（密度比 0.33~0.5）。
+- **补人**：`VillageWorld.MaintainPopulation()` 拿 `chunkPopulation[当前区块]`（+ `extraPopulation`，混乱 4 级会加）比
+  「挂在区块 `Villagers` 下面的活人」，少了就补，一次最多 `maxRespawnPerTick` 个。
+- **落点必须「玩家看不见」**（`VillageWorld.IsHiddenFromPlayer`）：
+  **相机视野之外**（`IsInsideView`，用 `ViewportToWorldPoint` 算世界矩形，外边再放宽 `hiddenMargin`），
+  **或者**虽然还在屏幕里、但从小虫望过去被**静态物体**挡住（`IsLineOfSightBlocked`：`Physics2D.RaycastAll` 命中
+  「没有刚体」的碰撞体才算 —— 村民 / 木箱 / 小虫自己是会动的东西，不算遮挡）。
+  找不到合格落点就**这一轮不补**，下一轮再看；候选点还要 `Physics2D.OverlapCircle(0.55)` 为空（别挤在别人身上）。
+- **自检**：`VisibleRespawnViolations` 恒应为 0；`LastRespawnPoints` 是上一轮的落点（验证脚本用它复核），
+  `IsOnScreen(点)` 是验证用的公开入口。实测：吃掉 3 个村民 → 3.5s 后补回，落点「屏幕外」或「屏内被挡」，**看得见的 0 个**。
+
+---
+
 ## 5. 资源规范（图片 / 音频）
 
 **完整规范在根 [`README.md`](../../README.md)**（对外交接文档，含每个 key 的像素/时长/响度要求）。
@@ -787,7 +858,7 @@ ArmsAt(coord) → ArmMask(shape, turn)        // 这个区块路在哪几边（�
 26. **密度是全局系数，别去改各个聚落 / 自然体系的数字**（2026-09-25 定，原「别改各张地图」）：
     加减密度改 `WorldBiome.Density` 一处；
     它只乘**房子 / 树 / 灌木 / 仙人掌 / 枯树 / 食物位 / 物品位 / 设施几率**，
-    **村民数量不乘**（人口影响性能与手感，单独调）。
+    **村民数量不直接乘**（人口走 §4.16 的「房子数 × 入住率」）。
 27. **所有「故障 / 报错」文字一律走 `GlitchOverlay.LogError`**（2026-09-25 定）：
     报错固定出现在**屏幕左下角**、红色、最多 5 行、新行把旧行往上顶（滚动）、2.2 秒后自己淡出。
     不要在别处再写一套飘字 / 用 `Debug.Log` 假装报错；加新的故障场景（新能力 / 新事故）时也调它，
@@ -916,6 +987,44 @@ ArmsAt(coord) → ArmMask(shape, turn)        // 这个区块路在哪几边（�
     注意：**森林 / 沙漠 / 城市本来就不铺瓦片**（见 §4.13 的两条硬限制），那边整条路都是路面贴图，
     不存在「混接」问题 —— 别把它们也算成 bug。
 
+48. **建筑物的碰撞体是「脚印」，不是整块占地**（2026-09-26 定，见 §4.16）：
+    宽 = **建筑图案的宽**、高 = `min(图案的高, 宽的 2/3)`、**底边压在建筑底边上**（`AddBuildingFootprint`）。
+    为什么：整栋建筑图是按原比例 contain 进占地的，**图没填满的那部分以前也压着碰撞体** ——
+    玩家看到的是一圈**看不见的墙**。缩成脚印后，房子上半截（屋顶 / 二楼）能走进去，
+    小虫站那儿 Y 更大 → `YSort` 序号更小 → **画在房子底下**，从主视角看就是「躲在房子后面」。
+    加新的建筑物时也要走 `AddBuildingFootprint`，别自己 `AddComponent<BoxCollider2D>` 写整块占地。
+    **另外：给「房子 + 附属地块」配对时，附属地块的 gap 必须大于它自己 `IsFree` 的 clearance**
+    （见 §4.16 的 ⚠️，gap 0.7 < clearance 1.0 会让四边全判「放不下」，极难查）。
+
+49. **房屋分布：先放「单门独户」，再长集群**（2026-09-26 定，见 §4.16）：
+    独户的条件最苛刻（离路 ≥ `isolatedRoadClearance`、边上要放得下那片大农田），
+    所以必须在**房子这一步的最前面**放；反过来集群会把整块地占满，独户一栋都放不下（实测 600 次尝试全废）。
+    放完独户要把它「房子 + 田」外扩 `loneYard` 登记进 `occupied`，否则后面的集群会贴着它盖，
+    「单门独户」当场变成又一家邻居。独户的物体名固定是 `House_Lone`（验证按它认）。
+
+50. **人口跟房子走，不许再「保证屏幕里有 N 个村民」**（2026-09-26 定，见 §4.16）：
+    `MinVillagersInView` / `MaxExtraPerChunk` / `KeepVillagersInView` / `VillageWorld.EnsureVillagersInView` 已删除；
+    人口 = 本区块**房子数 × `VillagersPerHouse(聚落)`**（乘一点随机、夹在上下限里），在生成时就算好。
+    旧的「视野里补人」是**当着玩家的面在 3~8 米内刷人**（正好在相机 16.8 × 29.9 的视野里），用户 2026-09-26 明确要求去掉。
+
+51. **补人（和一切 NPC 刷新）只能落在「玩家看不见」的地方**（2026-09-26 定，见 §4.16）：
+    判据 = `VillageWorld.IsHiddenFromPlayer(点)`：**相机视野之外**（`IsInsideView`，含 `hiddenMargin`）
+    **或**屏幕上但从小虫望过去被**静态碰撞体**挡着（`IsLineOfSightBlocked`：命中「没有刚体」的碰撞体才算遮挡）。
+    找不到合格落点就**这一轮不补**（别为了方便把它塞进屏幕里）。自检 `VisibleRespawnViolations == 0`。
+
+52. **挂 `YSort` 的物体，子渲染器的 `sortingOrder` 只能是「很小的相对偏移」**（2026-09-26 定，用户报的
+    「虫子头部的显示优先级太高，场地挡不住」）：
+    `YSort` 把子渲染器**初始的 `sortingOrder` 当成相对偏移**缓存（`scale` = 每世界单位 10 档），
+    所以「写 20」= 硬往前挤 2 米 —— 房子 / 树的排序按自己的中心 Y 算，就再也盖不住它了。
+    实测：小虫的 `Head` 写了 20 → 躲到房子屋顶下时头部仍戳在屋顶外面；改成 `+2` 后
+    「屋顶点上头 order 1266 < 房子 1276」= 屋顶盖住头部 ✓（尾巴同理：10 → `+1`）。
+    **另一条**：`YSort` 缓存的是 `Renderer`（不只是 `SpriteRenderer`），否则 `LineRenderer`
+    （小虫尾巴）根本进不了排序表、会一直停在写死的绝对序号上。
+    **还有一条**：物件「逻辑在根上、外观在 Visual 上」时，Visual 的 `sortingOrder` 要**按模式给** ——
+    挂了 YSort 就给相对偏移（`ItemCatalog.orderOffset`，默认 1），没挂（电线）才给 `yOrder + 偏移`。
+    写成 `yOrder + 偏移` 再挂 YSort = **Y 被算两遍**（2026-09-26 实测：木桶 / 石头 / 水泵的
+    Visual 序号比应得的高了 1300+，等于永远画在整个世界前面）。
+
 ---
 
 ## 7. 验证与自检规范
@@ -1029,6 +1138,7 @@ Set-Content -Path "$tmp\csc.rsp" -Value $lines -Encoding UTF8
 | 瓦片路网 | `VillageGenerator` 的 `useRoadTiles` / `roadTilesEverywhere` / `roadTileRoadRatio`（路面占画布比例，这套是 0.28125）；路型与朝向的**纯函数** `PickRoadShape` / `RoadPresent` / `TurnIndex` / `ArmsAt`（见 §4.13） |
 | 整身村民 / 头顶表情 | 整身图 `ArtKeys.Villager`（`VillageGenerator.villagerVisualHeight` / `villagerFootY`）；表情表 `Villager.EmojiFor`、大小与寿命 `emojiSize` / `emojiHeight` / `emojiSeconds`（见 §4.14） |
 | 城堡 / 杂项建筑 | `VillageGenerator.castleChance`（城市稀有地标）/ `extraHouseChance`（每栋房子改用整图的几率） |
+| 房屋分布 / 人口 / 建筑碰撞体 | `VillageGenerator.BuildHouses`（集群 + 独户，见 §4.16）、`WorldBiome.VillagersPerHouse`、`VillageWorld.MaintainPopulation` / `IsHiddenFromPlayer`（落在玩家看不见的地方）、建筑碰撞体 `AddBuildingFootprint` |
 | 存档版本 | **v6**（v6 = 取消地图选择、改记地貌与聚落；v5 = 删任务模块；v4 = 混乱/警觉/统计；v3 = 能力；v2 = 地图类型） |
 | 日志 | 编辑器日志 `%LOCALAPPDATA%\Tuanjie\Editor\Editor.log`；工程内 `Logs/` |
 | 运行时日志前缀 | `[Bug]` / `[ArtOverride]` / `[AudioOverride]` |

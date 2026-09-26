@@ -203,7 +203,7 @@ LineRenderer:
   m_LightmapParameters: {fileID: 0}
   m_SortingLayerID: 0
   m_SortingLayer: 0
-  m_SortingOrder: 10
+  m_SortingOrder: 1
   m_Positions:
   - {x: 0, y: 0, z: 0}
   - {x: -0.067, y: 0, z: 0}
@@ -859,6 +859,8 @@ MonoBehaviour:
   roadTilesEverywhere: 0
   roadTileRoadRatio: 0.28125
   roadHeadTipRatio: 0.7
+  drawPlazaPaving: 0
+  plazaClearRadius: 5
   groundFeatherWidth: 3
   groundFeatherSteps: 4
   plazaFeatherWidth: 1.6
@@ -901,6 +903,18 @@ MonoBehaviour:
   boardChance: 0.71999997
   extraHouseChance: 0.18
   castleChance: 0.08
+  isolatedHouseShare: 0.22
+  clusterMin: 2
+  clusterMax: 3
+  clusterRadius: 7
+  roadClusterShare: 0.6
+  roadSideOffset: 1.6
+  isolatedRoadClearance: 6
+  isolatedSpacing: 1.5
+  steadingChance: 0.85
+  houseSpacing: 1
+  steadingFarmWidth: {x: 6.5, y: 9.5}
+  steadingFarmHeight: {x: 4.4, y: 6}
   map: {fileID: 957318754}
   player: {fileID: 1683799118}
   playerSpawn: {x: 0, y: -3.4}
@@ -981,8 +995,10 @@ MonoBehaviour:
   freezeCheckInterval: 0.5
   tunnelMinGap: 24
   tunnelMaxGap: 110
-  viewHalfSize: {x: 13, y: 7.5}
-  extraMinVillagers: 0
+  populationInterval: 1
+  extraPopulation: 0
+  maxRespawnPerTick: 2
+  hiddenMargin: 1.5
 --- !u!1 &1113561683
 GameObject:
   m_ObjectHideFlags: 0
@@ -1695,7 +1711,7 @@ SpriteRenderer:
   m_LightmapParameters: {fileID: 0}
   m_SortingLayerID: 0
   m_SortingLayer: 0
-  m_SortingOrder: 20
+  m_SortingOrder: 2
   m_Sprite: {fileID: 21300000, guid: fa5c7a48f4516724f9e70ff2df5ba9db, type: 3}
   m_Color: {r: 1, g: 1, b: 1, a: 1}
   m_FlipX: 0
